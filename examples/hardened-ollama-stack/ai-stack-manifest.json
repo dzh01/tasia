@@ -1,0 +1,10 @@
+{
+  "tool": "tasia",
+  "runtimes": ["ollama"],
+  "interfaces": ["open-webui"],
+  "retrieval_databases": ["qdrant"],
+  "published_ports": [11434, 3000],
+  "secret_key_names_found": [],
+  "risk": "LOW",
+  "decision": "PASS"
+}
