@@ -62,6 +62,12 @@ func TestHardenedOverride(t *testing.T) {
 	if !strings.Contains(override, "ai_internal") || !strings.Contains(override, "127.0.0.1:11434:11434") {
 		t.Errorf("override did not generate expected localhost + internal net content; got:\n%s", override)
 	}
+	if !strings.Contains(override, "qdrant:\n    ports: []\n") && !strings.Contains(override, "ports: []\n    networks:\n      - ai_internal") {
+		// accept either ordering as long as qdrant forces no published ports
+		if !strings.Contains(override, "qdrant:") || strings.Contains(override, "127.0.0.1:6333") {
+			t.Errorf("vector DB qdrant should force ports: [] not publish; got:\n%s", override)
+		}
+	}
 }
 
 // Golden-style tests that drive the actual shipped report generators and WriteArtifacts.

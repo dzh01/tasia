@@ -71,4 +71,40 @@ func TestParseLinesAndPorts(t *testing.T) {
 	if !found11434 || !found3000 {
 		t.Errorf("localhost prefixed ports not parsed correctly: %+v", parsed2.Services)
 	}
+
+	// Test map-form ports (target/published) - previously returned nil / missed findings
+	mapf := filepath.Join(tmp, "compose-map-ports.yml")
+	mapContent := `services:
+  web:
+    image: ghcr.io/open-webui/open-webui:latest
+    ports:
+      - target: 8080
+        published: "3000"
+  vector:
+    image: qdrant/qdrant:latest
+    ports:
+      - target: 6333
+        published: "127.0.0.1:6333"
+`
+	if err := os.WriteFile(mapf, []byte(mapContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	parsed3, err := Parse(mapf)
+	if err != nil {
+		t.Fatalf("parse map: %v", err)
+	}
+	var webHP, vecHP int
+	for _, s := range parsed3.Services {
+		for _, p := range s.Ports {
+			if s.Name == "web" {
+				webHP = p.HostPort
+			}
+			if s.Name == "vector" {
+				vecHP = p.HostPort
+			}
+		}
+	}
+	if webHP != 3000 || vecHP != 6333 {
+		t.Errorf("map-form ports not parsed: web=%d vec=%d", webHP, vecHP)
+	}
 }

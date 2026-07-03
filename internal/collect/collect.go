@@ -73,6 +73,9 @@ func WalkAndCollect(root string) (*Collected, error) {
 		case strings.HasPrefix(lower, ".env"):
 			ef, perr := parseEnvKeys(path)
 			if perr == nil {
+				if r, err := filepath.Rel(root, path); err == nil {
+					ef.Path = r
+				}
 				c.EnvFiles = append(c.EnvFiles, ef)
 				c.SecretKeyNames = append(c.SecretKeyNames, ef.KeyNames...)
 			}
@@ -162,8 +165,8 @@ func parseEnvKeys(path string) (EnvFile, error) {
 			}
 		}
 	}
-	rel := path // caller can make rel
-	return EnvFile{Path: rel, KeyNames: keys}, nil
+	// Path will be made relative by caller (WalkAndCollect) for consistency with compose files
+	return EnvFile{Path: path, KeyNames: keys}, nil
 }
 
 func looksLikeSecretKey(k string) bool {

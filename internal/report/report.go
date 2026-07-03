@@ -255,24 +255,29 @@ func buildHardenedOverride(c *collect.Collected, findings []rules.Finding) strin
 			seen[key] = true
 
 			imgLower := strings.ToLower(svc.Image)
+			isVector := strings.Contains(imgLower, "qdrant") || strings.Contains(imgLower, "chroma") || strings.Contains(imgLower, "weaviate") || strings.Contains(imgLower, "milvus")
 			b.WriteString(fmt.Sprintf("  %s:\n", svc.Name))
 			// ports suggestion
-			hasPub := false
-			for _, p := range svc.Ports {
-				if p.HostPort > 0 {
-					hasPub = true
-					safe := fmt.Sprintf("\"127.0.0.1:%d:%d\"", p.HostPort, p.TargetPort)
-					b.WriteString("    ports:\n")
-					b.WriteString(fmt.Sprintf("      - %s\n", safe))
-					break
+			if isVector {
+				// Vector DBs must not publish ports to host; access only via internal network
+				b.WriteString("    ports: []\n")
+			} else {
+				hasPub := false
+				for _, p := range svc.Ports {
+					if p.HostPort > 0 {
+						hasPub = true
+						safe := fmt.Sprintf("\"127.0.0.1:%d:%d\"", p.HostPort, p.TargetPort)
+						b.WriteString("    ports:\n")
+						b.WriteString(fmt.Sprintf("      - %s\n", safe))
+						break
+					}
+				}
+				if !hasPub {
+					b.WriteString("    ports: []\n")
 				}
 			}
-			if !hasPub {
-				b.WriteString("    ports: []\n")
-			}
 			b.WriteString("    networks:\n      - ai_internal\n")
-			// for qdrant and retrieval make sure ports empty if exposed before
-			if strings.Contains(imgLower, "qdrant") || strings.Contains(imgLower, "chroma") {
+			if isVector {
 				b.WriteString("    # vector DBs should not publish ports; access via internal network only\n")
 			}
 		}

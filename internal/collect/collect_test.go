@@ -3,6 +3,7 @@ package collect
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,13 @@ func TestEnvNoValues(t *testing.T) {
 	for _, k := range col.SecretKeyNames {
 		if k == "hf_abc123" || k == "sk-xxx" {
 			t.Errorf("value leaked into key names: %s", k)
+		}
+	}
+	// Ensure relative path (not absolute) for consistency with compose files
+	if len(col.EnvFiles) > 0 {
+		p := col.EnvFiles[0].Path
+		if filepath.IsAbs(p) || strings.Contains(p, tmp) {
+			t.Errorf("env path should be relative, got %q", p)
 		}
 	}
 }

@@ -195,7 +195,7 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service) []
 				Severity: SeverityCritical,
 				Title:    "Docker socket mounted",
 				File:     relCompose,
-				Line:     0,
+				Line:     svc.VolumesLine,
 				Evidence: v,
 				Why:      "Mounting the Docker socket gives the container full control of the Docker daemon on the host.",
 				Fix:      "Remove docker.sock mount. Use rootless Docker or dedicated build service instead.",
@@ -211,7 +211,7 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service) []
 				Severity: SeverityMedium,
 				Title:    "broad bind mount",
 				File:     relCompose,
-				Line:     0,
+				Line:     svc.VolumesLine,
 				Evidence: v,
 				Why:      "Broad host-to-container bind mounts can expose source, secrets, or allow escape.",
 				Fix:      "Use more specific mounts or named volumes; prefer read-only where possible.",
@@ -234,7 +234,7 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service) []
 				Severity: SeverityMedium,
 				Title:    fmt.Sprintf("service env contains token key name: %s", k),
 				File:     relCompose,
-				Line:     0,
+				Line:     svc.EnvLine,
 				Evidence: k,
 				Why:      "Token/secret key names in compose environment may indicate credentials. Values are not inspected or emitted.",
 				Fix:      "Inject real secrets at deploy time (e.g. secrets, sops, platform env); commit only placeholders.",
@@ -247,7 +247,7 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service) []
 					Severity: SeverityHigh,
 					Title:    "permissive CORS (e.g. OLLAMA_ORIGINS=*)",
 					File:     relCompose,
-					Line:     0,
+					Line:     svc.EnvLine,
 					Evidence: e,
 					Why:      "Wildcard or empty CORS on AI endpoints allows arbitrary web pages to make cross-origin requests to the model or UI.",
 					Fix:      "Set explicit allowlist for OLLAMA_ORIGINS (or equivalent), e.g. http://localhost:*, or remove the var and use a reverse proxy with controlled CORS.",
@@ -277,7 +277,11 @@ func checkNetworkSeparation(cf compose.File, relCompose string) []Finding {
 	// if services publish ports and no internal net, note MEDIUM
 	if !hasInternal {
 		hasPub := false
+		line := 0
 		for _, s := range cf.Services {
+			if line == 0 && s.PortsLine > 0 {
+				line = s.PortsLine
+			}
 			for _, p := range s.Ports {
 				if p.HostPort > 0 {
 					hasPub = true
@@ -290,7 +294,7 @@ func checkNetworkSeparation(cf compose.File, relCompose string) []Finding {
 				Severity: SeverityMedium,
 				Title:    "no internal Docker network separation",
 				File:     relCompose,
-				Line:     0,
+				Line:     line,
 				Evidence: "no internal: true network defined",
 				Why:      "Published services share the host network namespace by default; internal networks limit lateral movement.",
 				Fix:      "Define an internal network and attach AI services to it. Publish only the minimum gateway if needed.",

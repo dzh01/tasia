@@ -24,10 +24,13 @@ type Service struct {
 	Image       string
 	ImageLine   int
 	Ports       []PortMapping
+	PortsLine   int // line of the 'ports:' key if present
 	Volumes     []string
+	VolumesLine int // line of the 'volumes:' key if present
 	Privileged  bool
 	PrivLine    int
 	Environment []string // "KEY=val" entries (from map or list form)
+	EnvLine     int      // line of the 'environment:' key if present
 	// Raw for future
 }
 
@@ -84,6 +87,7 @@ func Parse(path string) (*File, error) {
 			// ports
 			portsNode := getMapValue(svcNode, "ports")
 			if portsNode != nil {
+				svc.PortsLine = portsNode.Line
 				for _, pnode := range portsNode.Content {
 					pm := parsePort(pnode)
 					if pm != nil {
@@ -100,6 +104,7 @@ func Parse(path string) (*File, error) {
 			// volumes for broad mounts later
 			volsNode := getMapValue(svcNode, "volumes")
 			if volsNode != nil {
+				svc.VolumesLine = volsNode.Line
 				for _, v := range volsNode.Content {
 					svc.Volumes = append(svc.Volumes, v.Value)
 				}
@@ -107,6 +112,7 @@ func Parse(path string) (*File, error) {
 			// environment: for CORS checks + secret key names (values not retained long-term)
 			envNode := getMapValue(svcNode, "environment")
 			if envNode != nil {
+				svc.EnvLine = envNode.Line
 				if envNode.Kind == yaml.MappingNode {
 					for i := 0; i < len(envNode.Content); i += 2 {
 						k := envNode.Content[i].Value
@@ -160,18 +166,54 @@ func parsePort(node *yaml.Node) *PortMapping {
 	if node == nil {
 		return nil
 	}
+	line := node.Line
+	clean := func(s string) string { return strings.Trim(s, `"' `) }
+
+	// Handle long-form map ports:
+	// - target: 8080
+	//   published: "127.0.0.1:3000"
+	// or
+	// - published: 3000
+	//   target: 8080
+	if node.Kind == yaml.MappingNode {
+		pubNode := getMapValue(node, "published")
+		tgtNode := getMapValue(node, "target")
+		var raw string
+		var hp, tp int
+		if pubNode != nil {
+			raw = pubNode.Value
+			pv := clean(pubNode.Value)
+			pparts := splitPortRaw(pv)
+			if len(pparts) == 1 {
+				if n, ok := atoiSafe(pparts[0]); ok {
+					hp = n
+				}
+			} else if len(pparts) >= 2 {
+				// ip:port or port:something
+				last := clean(pparts[len(pparts)-1])
+				if n, ok := atoiSafe(last); ok {
+					hp = n
+				}
+			}
+		}
+		if tgtNode != nil {
+			if n, ok := atoiSafe(clean(tgtNode.Value)); ok {
+				tp = n
+			}
+		}
+		return &PortMapping{Raw: raw, Line: line, HostPort: hp, TargetPort: tp}
+	}
+
+	// scalar / short form
 	raw := node.Value
 	if raw == "" && len(node.Content) > 0 {
-		// sometimes sequence of maps, but common is scalar string
 		raw = node.Value
 	}
 	if raw == "" {
 		return nil
 	}
-	pm := &PortMapping{Raw: raw, Line: node.Line}
-	// parse common forms: "11434:11434", "127.0.0.1:11434:11434", "11434", "\"127.0.0.1:11434:11434\""
+	pm := &PortMapping{Raw: raw, Line: line}
 	parts := splitPortRaw(raw)
-	clean := func(s string) string { return strings.Trim(s, `"' `) }
 	if len(parts) == 1 {
 		p := clean(parts[0])
 		if n, ok := atoiSafe(p); ok {
@@ -182,7 +224,7 @@ func parsePort(node *yaml.Node) *PortMapping {
 		first := clean(parts[0])
 		second := clean(parts[1])
 		last := clean(parts[len(parts)-1])
-		if strings.Contains(first, ".") || strings.Contains(first, ":") { // IP prefix case e.g. 127.0.0.1:HP:TP
+		if strings.Contains(first, ".") || strings.Contains(first, ":") {
 			if n, ok := atoiSafe(second); ok {
 				pm.HostPort = n
 			}

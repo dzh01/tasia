@@ -154,19 +154,30 @@ func runInstall(args []string) error {
 		return nil
 	}
 
-	hookPath, err := prePushHookPath()
+	gitRoot, err := findGitRoot()
 	if err != nil {
 		return err
 	}
-	hookContent := `#!/bin/sh
-# Installed by tasia install --pre-push
-tasia ci --path . --fail-on high || exit 1
-`
+	hookDir := filepath.Join(gitRoot, ".git", "hooks")
+	if err := os.MkdirAll(hookDir, 0755); err != nil {
+		return err
+	}
+	hookPath := filepath.Join(hookDir, "pre-push")
+
+	// Prefer absolute path to this binary for the hook so it works without PATH
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		exe = "tasia"
+	}
+	hookContent := "#!/bin/sh\n" +
+		"# Installed by tasia install --pre-push\n" +
+		exe + " ci --path . --fail-on high || exit 1\n"
+
 	if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
 		return err
 	}
 	fmt.Printf("Installed pre-push hook at %s\n", hookPath)
-	fmt.Println("It will run: tasia ci --path . --fail-on high")
+	fmt.Printf("It will run: %s ci --path . --fail-on high\n", exe)
 	return nil
 }
 
@@ -181,10 +192,11 @@ func runUninstall(args []string) error {
 		fmt.Println("usage: tasia uninstall --pre-push")
 		return nil
 	}
-	hookPath, err := prePushHookPath()
+	gitRoot, err := findGitRoot()
 	if err != nil {
 		return err
 	}
+	hookPath := filepath.Join(gitRoot, ".git", "hooks", "pre-push")
 	if _, err := os.Stat(hookPath); os.IsNotExist(err) {
 		fmt.Println("No pre-push hook to remove.")
 		return nil
@@ -196,12 +208,23 @@ func runUninstall(args []string) error {
 	return nil
 }
 
-func prePushHookPath() (string, error) {
-	gitDir := ".git"
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		return "", fmt.Errorf("no .git directory found; run from repo root")
+// findGitRoot walks upward from cwd to locate the directory containing .git
+func findGitRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(gitDir, "hooks", "pre-push"), nil
+	for {
+		if st, err := os.Stat(filepath.Join(dir, ".git")); err == nil && st.IsDir() {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || parent == "" {
+			break
+		}
+		dir = parent
+	}
+	return "", fmt.Errorf("no .git directory found (run from inside a git repo)")
 }
 
 func runExplain(args []string) error {
