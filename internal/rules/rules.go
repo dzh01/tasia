@@ -219,7 +219,51 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service) []
 		}
 	}
 
+	// environment: token key names (from compose) + permissive CORS patterns (HIGH)
+	for _, e := range svc.Environment {
+		kv := strings.SplitN(e, "=", 2)
+		k := strings.TrimSpace(kv[0])
+		v := ""
+		if len(kv) > 1 {
+			v = strings.TrimSpace(kv[1])
+		}
+		uk := strings.ToUpper(k)
+		if looksLikeSecretKeyName(k) {
+			out = append(out, Finding{
+				ID:       "env_token_key",
+				Severity: SeverityMedium,
+				Title:    fmt.Sprintf("service env contains token key name: %s", k),
+				File:     relCompose,
+				Line:     0,
+				Evidence: k,
+				Why:      "Token/secret key names in compose environment may indicate credentials. Values are not inspected or emitted.",
+				Fix:      "Inject real secrets at deploy time (e.g. secrets, sops, platform env); commit only placeholders.",
+			})
+		}
+		if uk == "OLLAMA_ORIGINS" || strings.Contains(uk, "CORS") || strings.Contains(uk, "ALLOW_ORIGINS") {
+			if v == "*" || strings.Contains(v, "*") || strings.TrimSpace(v) == "" {
+				out = append(out, Finding{
+					ID:       "permissive_cors",
+					Severity: SeverityHigh,
+					Title:    "permissive CORS (e.g. OLLAMA_ORIGINS=*)",
+					File:     relCompose,
+					Line:     0,
+					Evidence: e,
+					Why:      "Wildcard or empty CORS on AI endpoints allows arbitrary web pages to make cross-origin requests to the model or UI.",
+					Fix:      "Set explicit allowlist for OLLAMA_ORIGINS (or equivalent), e.g. http://localhost:*, or remove the var and use a reverse proxy with controlled CORS.",
+				})
+			}
+		}
+	}
+
 	return out
+}
+
+func looksLikeSecretKeyName(k string) bool {
+	uk := strings.ToUpper(k)
+	return strings.Contains(uk, "TOKEN") || strings.Contains(uk, "KEY") || strings.Contains(uk, "SECRET") ||
+		strings.Contains(uk, "PASS") || strings.Contains(uk, "API") || strings.Contains(uk, "HF_") ||
+		strings.Contains(uk, "AUTH")
 }
 
 func checkNetworkSeparation(cf compose.File, relCompose string) []Finding {

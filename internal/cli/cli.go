@@ -82,15 +82,8 @@ func runReview(args []string) error {
 	// Decide
 	decision, risk := report.Decide(findings, *failOn, *strict)
 
-	// Terminal
-	if *format == "json" {
-		out, _ := report.FindingsToJSON(findings, decision, risk)
-		fmt.Println(out)
-	} else {
-		report.PrintSummary(findings, decision, risk)
-	}
-
-	// Write unless no-write
+	// Write unless no-write (do this first so side-effects don't affect format)
+	wrotePath := ""
 	if !*noWrite {
 		outDir := filepath.Join(absPath, ".tasia")
 		if err := os.MkdirAll(outDir, 0755); err != nil {
@@ -99,7 +92,21 @@ func runReview(args []string) error {
 		if err := report.WriteArtifacts(outDir, collected, findings, decision, risk); err != nil {
 			return err
 		}
-		fmt.Printf("\nWrote .tasia/ hardening pack to %s\n", outDir)
+		wrotePath = outDir
+	}
+
+	// Terminal (json must be pure on stdout)
+	if *format == "json" {
+		out, _ := report.FindingsToJSON(findings, decision, risk)
+		fmt.Println(out)
+		if wrotePath != "" {
+			fmt.Fprintf(os.Stderr, "Wrote .tasia/ hardening pack to %s\n", wrotePath)
+		}
+	} else {
+		report.PrintSummary(findings, decision, risk)
+		if wrotePath != "" {
+			fmt.Printf("\nWrote .tasia/ hardening pack to %s\n", wrotePath)
+		}
 	}
 
 	// Exit behavior for review: do not auto-exit non-zero here unless?

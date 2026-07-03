@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/joeyvictorino/tasia/internal/collect"
@@ -48,6 +49,42 @@ func TestEvaluateExposedAndLatest(t *testing.T) {
 	}
 	if !hasLatest {
 		t.Error("missing latest image finding")
+	}
+}
+
+func TestPermissiveCORSAndComposeEnvKeys(t *testing.T) {
+	c := &collect.Collected{
+		Root: "/tmp/test",
+		ComposeFiles: []compose.File{
+			{
+				Path: "docker-compose.yml",
+				Services: []compose.Service{
+					{
+						Name:  "ollama",
+						Image: "ollama/ollama:0.3",
+						Ports: []compose.PortMapping{{HostPort: 11434, Raw: "11434:11434", Line: 5}},
+						Environment: []string{"OLLAMA_ORIGINS=*", "HF_TOKEN=hf_xxx"},
+					},
+				},
+			},
+		},
+	}
+	fs := Evaluate(c)
+	hasCORS := false
+	hasEnvKey := false
+	for _, f := range fs {
+		if f.ID == "permissive_cors" && f.Severity == "HIGH" {
+			hasCORS = true
+		}
+		if f.ID == "env_token_key" && strings.Contains(f.Evidence, "HF_TOKEN") {
+			hasEnvKey = true
+		}
+	}
+	if !hasCORS {
+		t.Error("missing HIGH permissive_cors finding for OLLAMA_ORIGINS=*")
+	}
+	if !hasEnvKey {
+		t.Error("missing env token key from compose environment")
 	}
 }
 

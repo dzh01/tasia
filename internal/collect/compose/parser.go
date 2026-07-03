@@ -20,13 +20,14 @@ type File struct {
 
 // Service holds name + relevant fields with lines where possible.
 type Service struct {
-	Name       string
-	Image      string
-	ImageLine  int
-	Ports      []PortMapping
-	Volumes    []string
-	Privileged bool
-	PrivLine   int
+	Name        string
+	Image       string
+	ImageLine   int
+	Ports       []PortMapping
+	Volumes     []string
+	Privileged  bool
+	PrivLine    int
+	Environment []string // "KEY=val" entries (from map or list form)
 	// Raw for future
 }
 
@@ -103,6 +104,21 @@ func Parse(path string) (*File, error) {
 					svc.Volumes = append(svc.Volumes, v.Value)
 				}
 			}
+			// environment: for CORS checks + secret key names (values not retained long-term)
+			envNode := getMapValue(svcNode, "environment")
+			if envNode != nil {
+				if envNode.Kind == yaml.MappingNode {
+					for i := 0; i < len(envNode.Content); i += 2 {
+						k := envNode.Content[i].Value
+						v := envNode.Content[i+1].Value
+						svc.Environment = append(svc.Environment, k+"="+v)
+					}
+				} else if envNode.Kind == yaml.SequenceNode {
+					for _, e := range envNode.Content {
+						svc.Environment = append(svc.Environment, e.Value)
+					}
+				}
+			}
 			f.Services = append(f.Services, svc)
 		}
 	}
@@ -153,17 +169,32 @@ func parsePort(node *yaml.Node) *PortMapping {
 		return nil
 	}
 	pm := &PortMapping{Raw: raw, Line: node.Line}
-	// parse common forms: "11434:11434", "127.0.0.1:11434:11434", "11434"
-	// simple split
+	// parse common forms: "11434:11434", "127.0.0.1:11434:11434", "11434", "\"127.0.0.1:11434:11434\""
 	parts := splitPortRaw(raw)
-	if len(parts) >= 1 {
-		// last is container usually
-		if hp, ok := atoiSafe(parts[0]); ok {
-			pm.HostPort = hp
+	clean := func(s string) string { return strings.Trim(s, `"' `) }
+	if len(parts) == 1 {
+		p := clean(parts[0])
+		if n, ok := atoiSafe(p); ok {
+			pm.HostPort = n
+			pm.TargetPort = n
 		}
-		if len(parts) > 1 {
-			if tp, ok := atoiSafe(parts[len(parts)-1]); ok {
-				pm.TargetPort = tp
+	} else if len(parts) >= 2 {
+		first := clean(parts[0])
+		second := clean(parts[1])
+		last := clean(parts[len(parts)-1])
+		if strings.Contains(first, ".") || strings.Contains(first, ":") { // IP prefix case e.g. 127.0.0.1:HP:TP
+			if n, ok := atoiSafe(second); ok {
+				pm.HostPort = n
+			}
+			if n, ok := atoiSafe(last); ok {
+				pm.TargetPort = n
+			}
+		} else {
+			if n, ok := atoiSafe(first); ok {
+				pm.HostPort = n
+			}
+			if n, ok := atoiSafe(last); ok {
+				pm.TargetPort = n
 			}
 		}
 	}
