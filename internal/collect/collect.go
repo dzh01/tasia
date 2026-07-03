@@ -127,6 +127,17 @@ func extractFromCompose(c *Collected, f *compose.File) {
 				c.PublishedPorts = append(c.PublishedPorts, p.HostPort)
 			}
 		}
+		// compose environment secret key names (values ignored)
+		for _, e := range svc.Environment {
+			if idx := strings.Index(e, "="); idx > 0 {
+				k := strings.TrimSpace(e[:idx])
+				if looksLikeSecretKey(k) {
+					c.SecretKeyNames = append(c.SecretKeyNames, k)
+				}
+			} else if looksLikeSecretKey(e) {
+				c.SecretKeyNames = append(c.SecretKeyNames, strings.TrimSpace(e))
+			}
+		}
 		// images for detection later too
 		// mounts, privileged, etc handled in rules or here
 	}
