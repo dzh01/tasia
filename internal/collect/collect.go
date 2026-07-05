@@ -15,17 +15,17 @@ import (
 // Collected holds the aggregated data from scanning a tree.
 // Pure data for rules and reports.
 type Collected struct {
-	Root            string
-	ComposeFiles    []compose.File
-	EnvFiles        []EnvFile
-	Dockerfiles     []Dockerfile
-	OtherConfigs    []string // Modelfile etc later
-	DetectedRuntimes []string
+	Root               string
+	ComposeFiles       []compose.File
+	EnvFiles           []EnvFile
+	Dockerfiles        []Dockerfile
+	OtherConfigs       []string // Modelfile etc later
+	DetectedRuntimes   []string
 	DetectedInterfaces []string
 	DetectedRetrieval  []string
-	PublishedPorts  []int
-	SecretKeyNames  []string
-	HasManifest     bool
+	PublishedPorts     []int
+	SecretKeyNames     []string
+	HasManifest        bool
 }
 
 // EnvFile tracks .env* without values.
@@ -119,10 +119,10 @@ func WalkAndCollect(root string) (*Collected, error) {
 		for _, svc := range cf.Services {
 			name := strings.ToLower(svc.Image)
 			for label, needles := range map[string][]string{
-				"ollama":      {"ollama"},
-				"vllm":        {"vllm"},
-				"llama.cpp":   {"llama.cpp", "llamacpp"},
-				"lm-studio":   {"lmstudio", "lm-studio"},
+				"ollama":    {"ollama"},
+				"vllm":      {"vllm"},
+				"llama.cpp": {"llama.cpp", "llamacpp"},
+				"lm-studio": {"lmstudio", "lm-studio"},
 			} {
 				if containsAny(name, needles) {
 					c.DetectedRuntimes = append(c.DetectedRuntimes, label)

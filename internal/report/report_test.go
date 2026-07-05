@@ -26,11 +26,11 @@ func TestDecideAndPrint(t *testing.T) {
 
 func TestManifestAndNoSecrets(t *testing.T) {
 	c := &collect.Collected{
-		DetectedRuntimes:    []string{"ollama"},
-		DetectedInterfaces:  []string{"open-webui"},
-		DetectedRetrieval:   []string{"qdrant"},
-		PublishedPorts:      []int{11434, 3000, 6333},
-		SecretKeyNames:      []string{"HF_TOKEN"},
+		DetectedRuntimes:   []string{"ollama"},
+		DetectedInterfaces: []string{"open-webui"},
+		DetectedRetrieval:  []string{"qdrant"},
+		PublishedPorts:     []int{11434, 3000, 6333},
+		SecretKeyNames:     []string{"HF_TOKEN"},
 	}
 	fs := []rules.Finding{{Severity: "HIGH"}}
 	m := buildManifest(c, fs, "BLOCKED", "HIGH")

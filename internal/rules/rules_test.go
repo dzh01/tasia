@@ -16,10 +16,10 @@ func TestEvaluateExposedAndLatest(t *testing.T) {
 				Path: "docker-compose.yml",
 				Services: []compose.Service{
 					{
-						Name:  "ollama",
-						Image: "ollama/ollama:latest",
+						Name:      "ollama",
+						Image:     "ollama/ollama:latest",
 						ImageLine: 3,
-						Ports: []compose.PortMapping{{HostPort: 11434, TargetPort: 11434, Raw: "11434:11434", Line: 5}},
+						Ports:     []compose.PortMapping{{HostPort: 11434, TargetPort: 11434, Raw: "11434:11434", Line: 5}},
 					},
 					{
 						Name:  "webui",
@@ -60,9 +60,9 @@ func TestPermissiveCORSAndComposeEnvKeys(t *testing.T) {
 				Path: "docker-compose.yml",
 				Services: []compose.Service{
 					{
-						Name:  "ollama",
-						Image: "ollama/ollama:0.3",
-						Ports: []compose.PortMapping{{HostPort: 11434, Raw: "11434:11434", Line: 5}},
+						Name:        "ollama",
+						Image:       "ollama/ollama:0.3",
+						Ports:       []compose.PortMapping{{HostPort: 11434, Raw: "11434:11434", Line: 5}},
 						Environment: []string{"OLLAMA_ORIGINS=*", "HF_TOKEN=hf_xxx"},
 					},
 				},
@@ -200,9 +200,9 @@ func TestDatastoreExposureSeverity(t *testing.T) {
 func TestNoSecretValues(t *testing.T) {
 	// ensure rule never invents values; here just env keys
 	c := &collect.Collected{
-		Root: ".",
-		EnvFiles: []collect.EnvFile{{Path: ".env", Keys: []collect.EnvKey{{Name: "HF_TOKEN", Line: 1}, {Name: "OPENAI_API_KEY", Line: 2}}}},
-		ComposeFiles: []compose.File{{Path: "c.yml", Services: []compose.Service{{Name:"x", Image:"ollama/ollama:0.1"}}}},
+		Root:         ".",
+		EnvFiles:     []collect.EnvFile{{Path: ".env", Keys: []collect.EnvKey{{Name: "HF_TOKEN", Line: 1}, {Name: "OPENAI_API_KEY", Line: 2}}}},
+		ComposeFiles: []compose.File{{Path: "c.yml", Services: []compose.Service{{Name: "x", Image: "ollama/ollama:0.1"}}}},
 	}
 	fs := Evaluate(c)
 	for _, f := range fs {
@@ -214,11 +214,13 @@ func TestNoSecretValues(t *testing.T) {
 
 func containsAny(s string, bad []string) bool {
 	for _, b := range bad {
-		if len(b) > 0 && (len(s) > 0 && (s == b || len(s) > 3 && contains(s, b)) ) {
+		if len(b) > 0 && (len(s) > 0 && (s == b || len(s) > 3 && contains(s, b))) {
 			return true
 		}
 	}
 	return false
 }
 
-func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || (len(sub)>0 && (s[0:len(sub)] == sub || contains(s[1:], sub))) ) }
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || (len(sub) > 0 && (s[0:len(sub)] == sub || contains(s[1:], sub))))
+}
