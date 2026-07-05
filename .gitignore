@@ -29,3 +29,6 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Private launch strategy / internal notes (never publish)
+notes/
