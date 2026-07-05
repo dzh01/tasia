@@ -1,0 +1,50 @@
+version: 2
+
+project_name: tasia
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: tasia
+    main: ./cmd/tasia
+    binary: tasia
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/joeyvictorino/tasia/internal/cli.Version={{ .Version }}
+      - -X github.com/joeyvictorino/tasia/internal/cli.Commit={{ .ShortCommit }}
+      - -X github.com/joeyvictorino/tasia/internal/cli.Date={{ .Date }}
+
+archives:
+  - id: tasia
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: joeyvictorino
+    name: tasia
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

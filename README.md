@@ -5,12 +5,39 @@ Tasia reviews local/private AI deployment configs, flags risky exposure patterns
 
 Private AI is not automatically private.
 
+## Install
+
+**No Go toolchain required — download a prebuilt binary:**
+
+```bash
+# macOS (Apple Silicon) example — pick the asset matching your OS/arch
+VERSION=v0.1.0
+curl -sSfL "https://github.com/joeyvictorino/tasia/releases/download/${VERSION}/tasia_${VERSION#v}_darwin_arm64.tar.gz" | tar xz
+sudo mv tasia /usr/local/bin/
+tasia version
+```
+
+Prebuilt binaries are published for `darwin_arm64`, `darwin_amd64`, `linux_amd64`,
+and `linux_arm64` on every release, with a `checksums.txt` to verify downloads.
+Browse them at **https://github.com/joeyvictorino/tasia/releases**.
+
+**With Go:**
+
+```bash
+go install github.com/joeyvictorino/tasia/cmd/tasia@latest
+```
+
+**From source:**
+
+```bash
+git clone https://github.com/joeyvictorino/tasia
+cd tasia
+go build -o tasia ./cmd/tasia
+```
+
 ## Quickstart
 
 ```bash
-# Install
-go install github.com/joeyvictorino/tasia/cmd/tasia@latest
-
 # Review a directory
 tasia review --path .
 

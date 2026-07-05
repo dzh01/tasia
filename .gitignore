@@ -15,6 +15,9 @@ tasia
 # Go workspace file
 go.work
 
+# goreleaser output
+dist/
+
 # IDE
 .idea/
 .vscode/
