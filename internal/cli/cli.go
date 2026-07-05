@@ -176,20 +176,21 @@ func runInstall(args []string) error {
 	}
 	hookPath := filepath.Join(hookDir, "pre-push")
 
-	// Prefer absolute path to this binary for the hook so it works without PATH
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "tasia"
-	}
+	// Resolve tasia from PATH at hook-run time so the hook keeps working if the
+	// binary is upgraded or moved. Fail closed (block the push) if it is missing.
 	hookContent := "#!/bin/sh\n" +
 		"# Installed by tasia install --pre-push\n" +
-		exe + " ci --path . --fail-on high || exit 1\n"
+		"if ! command -v tasia >/dev/null 2>&1; then\n" +
+		"  echo \"tasia not found in PATH — install it or run: tasia uninstall --pre-push\" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"tasia ci --path . --fail-on high || exit 1\n"
 
 	if err := os.WriteFile(hookPath, []byte(hookContent), 0755); err != nil {
 		return err
 	}
 	fmt.Printf("Installed pre-push hook at %s\n", hookPath)
-	fmt.Printf("It will run: %s ci --path . --fail-on high\n", exe)
+	fmt.Println("It will run: tasia ci --path . --fail-on high (tasia resolved from PATH)")
 	return nil
 }
 
