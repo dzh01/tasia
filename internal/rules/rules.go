@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joeyvictorino/tasia/internal/collect"
-	"github.com/joeyvictorino/tasia/internal/collect/compose"
+	"github.com/dzh01/tasia/internal/collect"
+	"github.com/dzh01/tasia/internal/collect/compose"
 )
 
 // Severity levels

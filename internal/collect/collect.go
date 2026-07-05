@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/joeyvictorino/tasia/internal/collect/compose"
+	"github.com/dzh01/tasia/internal/collect/compose"
 )
 
 // Collected holds the aggregated data from scanning a tree.

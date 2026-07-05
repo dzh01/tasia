@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeyvictorino/tasia/internal/rules"
+	"github.com/dzh01/tasia/internal/rules"
 )
 
 func TestRedactNeverLeaks(t *testing.T) {

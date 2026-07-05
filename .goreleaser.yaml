@@ -20,9 +20,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/joeyvictorino/tasia/internal/cli.Version={{ .Version }}
-      - -X github.com/joeyvictorino/tasia/internal/cli.Commit={{ .ShortCommit }}
-      - -X github.com/joeyvictorino/tasia/internal/cli.Date={{ .Date }}
+      - -X github.com/dzh01/tasia/internal/cli.Version={{ .Version }}
+      - -X github.com/dzh01/tasia/internal/cli.Commit={{ .ShortCommit }}
+      - -X github.com/dzh01/tasia/internal/cli.Date={{ .Date }}
 
 archives:
   - id: tasia
@@ -36,7 +36,7 @@ checksum:
 
 release:
   github:
-    owner: joeyvictorino
+    owner: dzh01
     name: tasia
   draft: false
   prerelease: auto

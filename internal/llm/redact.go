@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/joeyvictorino/tasia/internal/rules"
+	"github.com/dzh01/tasia/internal/rules"
 )
 
 // RedactFindings removes any potential secret values. Only keeps structure, ids, titles, files, lines, why/fix (already non-secret).

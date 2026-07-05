@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeyvictorino/tasia/internal/collect"
-	"github.com/joeyvictorino/tasia/internal/collect/compose"
+	"github.com/dzh01/tasia/internal/collect"
+	"github.com/dzh01/tasia/internal/collect/compose"
 )
 
 func TestEvaluateExposedAndLatest(t *testing.T) {

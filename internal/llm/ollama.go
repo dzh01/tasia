@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joeyvictorino/tasia/internal/rules"
+	"github.com/dzh01/tasia/internal/rules"
 )
 
 // DefaultOllamaHost is the host:port used when --ollama-host is not given.

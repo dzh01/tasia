@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joeyvictorino/tasia/internal/rules"
+	"github.com/dzh01/tasia/internal/rules"
 )
 
 // TestExplainSendsOnlyRedactedPack stands up a fake Ollama server, captures the
