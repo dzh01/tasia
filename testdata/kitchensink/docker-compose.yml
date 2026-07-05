@@ -1,0 +1,28 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    privileged: true
+    environment:
+      - OLLAMA_ORIGINS=*
+      - HF_TOKEN=placeholder
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app
+    ports:
+      - "11434:11434"
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    ports:
+      - "3000:8080"
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+  milvus:
+    image: milvusdb/milvus:v2.4
+    ports:
+      - "19530:19530"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"

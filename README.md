@@ -56,17 +56,20 @@ Tasia will:
 
 | Finding | Severity |
 |---------|----------|
-| Inference API (Ollama/vLLM/...) published to all interfaces | HIGH |
+| Inference API (Ollama / vLLM / llama.cpp / LM Studio) published to all interfaces | HIGH |
 | Open WebUI / Gradio UI published to all interfaces | HIGH |
-| Vector DB (Qdrant/Chroma/...) published to host | HIGH |
+| Vector DB (Qdrant / Chroma / Weaviate / Milvus) published to host | HIGH |
+| Data store (Redis / Postgres) published to host | HIGH alongside AI, else MEDIUM |
 | Docker socket mounted | CRITICAL |
 | `privileged: true` | CRITICAL |
-| `.env` contains token/secret key names (values never printed) | MEDIUM |
+| Permissive CORS e.g. `OLLAMA_ORIGINS=*` | HIGH |
+| `.env` / compose contains token/secret key names (values never printed) | MEDIUM |
 | `image: ...:latest` | MEDIUM |
 | Broad bind mounts (e.g. `.:/app`) | MEDIUM |
-| Permissive CORS e.g. `OLLAMA_ORIGINS=*` | HIGH |
 | No internal Docker network separation | MEDIUM |
 | No AI stack manifest | LOW |
+
+See [`docs/rules.md`](docs/rules.md) for the exact match rules and ports.
 
 ## What Tasia generates
 
@@ -79,7 +82,7 @@ After `tasia review --path .` you get `.tasia/`:
 - `firewall-notes.md`
 - `findings.json`
 - `findings.toon` — compact agent-readable format
-- `LLM_REVIEW.md` — optional local-LLM human summary (see below)
+- `LLM_REVIEW.md` — **only** created by `tasia explain` (not by `review`); optional local-LLM human summary (see below)
 
 ## Example: messy Ollama stack
 
@@ -129,19 +132,35 @@ Exit codes:
 
 ```bash
 tasia explain --ollama llama3.1
+# custom host/port:
+tasia explain --ollama llama3.1 --ollama-host 127.0.0.1:11434
 ```
 
-Only redacted findings (no values, no secrets) are sent to your local Ollama. The deterministic rules remain authoritative. LLM only produces nicer prose in `LLM_REVIEW.md`.
+`explain` POSTs **only the redacted findings** (no values, no secrets, no raw
+files) to your local Ollama at `http://localhost:11434/api/generate` and writes
+the prose to `.tasia/LLM_REVIEW.md`. `LLM_REVIEW.md` is written **only** by
+`explain` — a plain `review` never implies an LLM was consulted.
 
-The LLM is never required. Tasia is fully functional without it.
+The deterministic rules are always authoritative. The LLM is never required:
+`review` and `ci` never call it and never fail because of it. If Ollama is
+unreachable, `explain` prints a clear message and exits `2`. Without `--ollama`,
+`explain` just writes the redacted facts and the command to generate prose.
 
 ## Options for review
 
 ```
-tasia review --path . --format text|json
-tasia review --path . --fail-on high
-tasia review --path . --no-write
-tasia review --path . --strict
+tasia review --path . --format text|json   # text (default) or pure-JSON stdout
+tasia review --path . --fail-on high        # critical|high|medium threshold
+tasia review --path . --no-write            # print only; write nothing
+tasia review --path . --strict              # treat medium+ as blocking
+```
+
+Other commands:
+
+```
+tasia version                 # print version / commit / build date
+tasia uninstall --pre-push    # remove the git hook
+tasia help                    # full usage
 ```
 
 ## What Tasia does not do
