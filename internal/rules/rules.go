@@ -184,8 +184,9 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service, st
 		})
 	}
 
-	// image :latest
-	if strings.HasSuffix(svc.Image, ":latest") || !strings.Contains(svc.Image, ":") {
+	// image :latest or untagged (ignore registry-host ports and digests by
+	// only inspecting the final path segment for a tag).
+	if strings.HasSuffix(svc.Image, ":latest") || untagged(svc.Image) {
 		out = append(out, Finding{
 			ID:       "latest_image",
 			Severity: SeverityMedium,
@@ -216,7 +217,8 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service, st
 
 	// broad bind mount like .:/app
 	for _, v := range svc.Volumes {
-		if strings.HasPrefix(v, ".:") || strings.HasPrefix(v, "./:") || strings.Contains(v, ":/app") && !strings.Contains(v, "ro") {
+		broad := strings.HasPrefix(v, ".:") || strings.HasPrefix(v, "./:") || strings.Contains(v, ":/app")
+		if broad && !isReadOnlyMount(v) {
 			out = append(out, Finding{
 				ID:       "broad_bind_mount",
 				Severity: SeverityMedium,
@@ -268,6 +270,26 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service, st
 	}
 
 	return out
+}
+
+// untagged reports whether an image reference has no explicit tag, inspecting
+// only the final path segment so a registry host port (myreg:5000/img) or a
+// digest (img@sha256:...) is not mistaken for a tag.
+func untagged(image string) bool {
+	seg := image
+	if i := strings.LastIndex(seg, "/"); i >= 0 {
+		seg = seg[i+1:]
+	}
+	if strings.Contains(seg, "@") { // pinned by digest
+		return false
+	}
+	return !strings.Contains(seg, ":")
+}
+
+// isReadOnlyMount reports whether a volume string's mode field is read-only.
+func isReadOnlyMount(v string) bool {
+	parts := strings.Split(v, ":")
+	return len(parts) > 0 && parts[len(parts)-1] == "ro"
 }
 
 func looksLikeSecretKeyName(k string) bool {
@@ -438,7 +460,7 @@ func checkNetworkSeparation(cf compose.File, relCompose string) []Finding {
 				File:     relCompose,
 				Line:     line,
 				Evidence: "no internal: true network defined",
-				Why:      "Published services share the host network namespace by default; internal networks limit lateral movement.",
+				Why:      "Services share the default Docker bridge network and can reach each other freely; an internal network limits lateral movement.",
 				Fix:      "Define an internal network and attach AI services to it. Publish only the minimum gateway if needed.",
 			})
 		}

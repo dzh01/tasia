@@ -290,3 +290,54 @@ func containsAny(s string, bad []string) bool {
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || (len(sub) > 0 && (s[0:len(sub)] == sub || contains(s[1:], sub))))
 }
+
+func TestLatestImageEdgeCases(t *testing.T) {
+	mk := func(img string) *collect.Collected {
+		return &collect.Collected{Root: ".", ComposeFiles: []compose.File{{Path: "docker-compose.yml",
+			Services: []compose.Service{{Name: "s", Image: img, ImageLine: 3}}}}}
+	}
+	flagged := func(img string) bool {
+		for _, f := range Evaluate(mk(img)) {
+			if f.ID == "latest_image" {
+				return true
+			}
+		}
+		return false
+	}
+	if !flagged("ollama/ollama") {
+		t.Error("untagged image should be flagged")
+	}
+	if !flagged("myreg:5000/ollama") {
+		t.Error("untagged image behind registry:port should be flagged")
+	}
+	if flagged("myreg:5000/ollama:0.3") {
+		t.Error("tagged image behind registry:port should NOT be flagged")
+	}
+	if flagged("ollama/ollama@sha256:abc123") {
+		t.Error("digest-pinned image should NOT be flagged")
+	}
+}
+
+func TestBroadBindMountReadOnly(t *testing.T) {
+	mk := func(vol string) *collect.Collected {
+		return &collect.Collected{Root: ".", ComposeFiles: []compose.File{{Path: "docker-compose.yml",
+			Services: []compose.Service{{Name: "s", Image: "x:1", VolumesLine: 4, Volumes: []string{vol}}}}}}
+	}
+	flagged := func(vol string) bool {
+		for _, f := range Evaluate(mk(vol)) {
+			if f.ID == "broad_bind_mount" {
+				return true
+			}
+		}
+		return false
+	}
+	if !flagged(".:/app") {
+		t.Error(".:/app should be flagged")
+	}
+	if flagged(".:/app:ro") {
+		t.Error("read-only .:/app:ro should NOT be flagged")
+	}
+	if flagged("/data/prometheus:/prometheus") {
+		t.Error("unrelated path containing 'ro' substring should NOT be flagged as broad")
+	}
+}
