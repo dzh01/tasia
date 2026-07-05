@@ -1,43 +1,25 @@
-# vhs tape for the Tasia launch GIF.
-# Render: brew install vhs ttyd ffmpeg && go build -o tasia ./cmd/tasia && PATH=$PWD:$PATH vhs docs/demo.tape
-# Produces docs/demo.gif
+# Demo tape for the README GIF, rendered with ascii-gif.
+# https://github.com/tamnd/ascii-gif (wraps vhs; needs ttyd + ffmpeg)
+#
+# Render from the repo root with tasia on PATH:
+#   go build -o tasia ./cmd/tasia && export PATH=$PWD:$PATH
+#   ascii-gif render docs/demo.tape -o docs/demo.gif
+#
+# ascii-gif prepends the window styling; this tape holds only the action.
+# The hidden block pre-generates .tasia so the visible commands can use
+# --no-write (keeps absolute paths out of the frame).
 
-Output docs/demo.gif
-
-Require tasia
-
-Set Shell "bash"
-Set FontSize 15
-Set Width 1200
-Set Height 760
-Set Theme "Dracula"
-Set Padding 18
-Set TypingSpeed 45ms
-
-Type "# Private AI is not automatically private. Let's check a stack:"
+Hide
+Type "rm -rf examples/*/.tasia && tasia review --path examples/messy-ollama-stack >/dev/null 2>&1 && clear"
 Enter
-Sleep 800ms
-
-Type "tasia review --path examples/messy-ollama-stack"
+Sleep 700ms
+Show
+Type "tasia review --path examples/messy-ollama-stack --no-write"
 Enter
-Sleep 3s
-
-Type "# BLOCKED, HIGH risk, each finding has file:line. Now the fix pack:"
-Enter
-Sleep 800ms
-
+Sleep 3800ms
 Type "cat examples/messy-ollama-stack/.tasia/docker-compose.hardened.override.yml"
 Enter
-Sleep 3s
-
-Type "# Suggestions only — Tasia never edits your files. Hardened stack:"
+Sleep 3800ms
+Type "tasia review --path examples/hardened-ollama-stack --no-write"
 Enter
-Sleep 800ms
-
-Type "tasia review --path examples/hardened-ollama-stack"
-Enter
-Sleep 3s
-
-Type "# PASS. Gate it in CI or as a git pre-push hook."
-Enter
-Sleep 2500ms
+Sleep 3000ms

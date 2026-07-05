@@ -5,6 +5,8 @@ Tasia reviews local/private AI deployment configs, flags risky exposure patterns
 
 Private AI is not automatically private.
 
+![tasia reviewing a messy Ollama stack: BLOCKED with file:line findings, a hardened compose override, then a clean pass](docs/demo.gif)
+
 ## Install
 
 **No Go toolchain required — download a prebuilt binary:**

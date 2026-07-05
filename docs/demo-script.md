@@ -42,15 +42,17 @@ git push origin master            # PASS -> push accepted
 
 ## Rendering the GIF
 
-The `docs/demo.tape` file drives [vhs](https://github.com/charmbracelet/vhs).
-Rendering requires `vhs`, `ttyd`, and `ffmpeg`:
+`docs/demo.gif` is rendered from `docs/demo.tape` with
+[ascii-gif](https://github.com/tamnd/ascii-gif) (a styled vhs wrapper).
+Rendering needs `ttyd` and `ffmpeg`:
 
 ```bash
-brew install vhs ttyd ffmpeg          # macOS
+brew install ttyd ffmpeg                                   # macOS
+go install github.com/tamnd/ascii-gif/cmd/ascii-gif@latest
 go build -o tasia ./cmd/tasia
 export PATH="$PWD:$PATH"
-vhs docs/demo.tape                     # writes docs/demo.gif
+ascii-gif render docs/demo.tape -o docs/demo.gif
 ```
 
-Alternatively record with asciinema: `asciinema rec demo.cast` and paste the
-"winning demo" block above.
+Run from the repo root with `tasia` on `PATH`. ascii-gif prepends the window
+styling; the tape holds only the terminal actions.
