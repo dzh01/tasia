@@ -122,7 +122,7 @@ func TestWriteArtifactsGolden(t *testing.T) {
 	}
 
 	// Assert files + key content (drives the real writers)
-	for _, name := range []string{"HARDENING_PLAN.md", "EXECUTIVE_MEMO.md", "ai-stack-manifest.json", "docker-compose.hardened.override.yml", "findings.json", "findings.toon", "firewall-notes.md", "LLM_REVIEW.md"} {
+	for _, name := range []string{"HARDENING_PLAN.md", "EXECUTIVE_MEMO.md", "ai-stack-manifest.json", "docker-compose.hardened.override.yml", "findings.json", "findings.toon", "firewall-notes.md"} {
 		p := filepath.Join(outDir, name)
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("missing artifact %s", name)
@@ -136,5 +136,10 @@ func TestWriteArtifactsGolden(t *testing.T) {
 		if name == "ai-stack-manifest.json" && !strings.Contains(s, `"decision": "BLOCKED"`) {
 			t.Errorf("%s missing decision", name)
 		}
+	}
+
+	// review-time WriteArtifacts must NOT imply an LLM was consulted.
+	if _, err := os.Stat(filepath.Join(outDir, "LLM_REVIEW.md")); err == nil {
+		t.Error("WriteArtifacts should not write LLM_REVIEW.md; it is produced only by `tasia explain`")
 	}
 }

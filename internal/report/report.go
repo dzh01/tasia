@@ -142,11 +142,8 @@ func WriteArtifacts(outDir string, c *collect.Collected, findings []rules.Findin
 		return err
 	}
 
-	// LLM_REVIEW.md placeholder (will be populated by explain later; always create empty-ish)
-	llm := "# LLM_REVIEW.md\n\nGenerated only via `tasia explain`. Rule findings are authoritative.\n"
-	if err := os.WriteFile(filepath.Join(outDir, "LLM_REVIEW.md"), []byte(llm), 0644); err != nil {
-		return err
-	}
+	// LLM_REVIEW.md is intentionally NOT written here. It is produced only by
+	// `tasia explain` so the pack never implies an LLM was consulted.
 
 	return nil
 }
