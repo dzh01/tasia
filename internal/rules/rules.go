@@ -40,8 +40,9 @@ func Evaluate(c *collect.Collected) []Finding {
 		if relPath == "" || strings.HasPrefix(relPath, "..") {
 			relPath = cf.Path
 		}
+		stackHasAI := composeHasAIComponent(cf)
 		for _, svc := range cf.Services {
-			fs = append(fs, evaluateService(cf, relPath, svc)...)
+			fs = append(fs, evaluateService(cf, relPath, svc, stackHasAI)...)
 		}
 		// network separation check at compose level
 		fs = append(fs, checkNetworkSeparation(cf, relPath)...)
@@ -49,14 +50,14 @@ func Evaluate(c *collect.Collected) []Finding {
 
 	// env token keys
 	for _, ef := range c.EnvFiles {
-		for _, k := range ef.KeyNames {
+		for _, k := range ef.Keys {
 			fs = append(fs, Finding{
 				ID:       "env_token_key",
 				Severity: SeverityMedium,
-				Title:    fmt.Sprintf(".env contains token key name: %s", k),
+				Title:    fmt.Sprintf(".env contains token key name: %s", k.Name),
 				File:     ef.Path,
-				Line:     0, // env lines not parsed for lineno yet
-				Evidence: k,
+				Line:     k.Line,
+				Evidence: k.Name,
 				Why:      "Token or secret key names in env files indicate credentials may be present. Never commit real secrets; use .env.example.",
 				Fix:      "Move real secrets out of repo; add .env to .gitignore; provide .env.example with placeholders only.",
 			})
@@ -94,68 +95,71 @@ func Evaluate(c *collect.Collected) []Finding {
 	return fs
 }
 
-func evaluateService(cf compose.File, relCompose string, svc compose.Service) []Finding {
+func evaluateService(cf compose.File, relCompose string, svc compose.Service, stackHasAI bool) []Finding {
 	var out []Finding
 
-	img := strings.ToLower(svc.Image)
-	isOllama := strings.Contains(img, "ollama")
-	isWebUI := strings.Contains(img, "open-webui") || strings.Contains(img, "gradio")
-	isQdrant := strings.Contains(img, "qdrant")
-	isChroma := strings.Contains(img, "chroma")
-	isVllm := strings.Contains(img, "vllm")
-	isVector := isQdrant || isChroma
-
-	// exposed inference / UI / vector on host ports
+	// exposed inference / UI / vector / datastore on host ports
 	for _, p := range svc.Ports {
 		if p.HostPort <= 0 {
 			continue
 		}
 		hostAll := !strings.HasPrefix(p.Raw, "127.0.0.1") && !strings.HasPrefix(p.Raw, "localhost")
-
-		switch {
-		case isOllama || isVllm:
-			if hostAll {
-				out = append(out, Finding{
-					ID:       "exposed_inference",
-					Severity: SeverityHigh,
-					Title:    "Inference API published to all interfaces",
-					File:     relCompose,
-					Line:     p.Line,
-					Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-					Why:      "The inference API may be reachable by unintended systems on the host network.",
-					Fix:      "Bind to localhost unless remote access is intentionally required. Use internal Docker network for other services.",
-				})
+		if !hostAll {
+			continue
+		}
+		// Classify by image first, then fall back to the published port number
+		// so bare/unknown images (e.g. LM Studio on 1234) are still caught.
+		switch classifyService(svc.Image, p.HostPort) {
+		case catInference:
+			out = append(out, Finding{
+				ID:       "exposed_inference",
+				Severity: SeverityHigh,
+				Title:    "Inference API published to all interfaces",
+				File:     relCompose,
+				Line:     p.Line,
+				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
+				Why:      "The inference API may be reachable by unintended systems on the host network.",
+				Fix:      "Bind to localhost unless remote access is intentionally required. Use internal Docker network for other services.",
+			})
+		case catUI:
+			out = append(out, Finding{
+				ID:       "exposed_ui",
+				Severity: SeverityHigh,
+				Title:    "Open WebUI/Gradio UI published to all interfaces",
+				File:     relCompose,
+				Line:     p.Line,
+				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
+				Why:      "Web UI for chatting with models should not be reachable from outside the host by default.",
+				Fix:      "Bind to 127.0.0.1 or put behind auth proxy. Consider internal-only network.",
+			})
+		case catVector:
+			out = append(out, Finding{
+				ID:       "exposed_vector",
+				Severity: SeverityHigh,
+				Title:    "Vector DB published to host",
+				File:     relCompose,
+				Line:     p.Line,
+				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
+				Why:      "Vector database contains embeddings that may encode sensitive retrieved data.",
+				Fix:      "Do not publish vector DB ports to host. Access only via internal Docker network from trusted services.",
+			})
+		case catDatastore:
+			sev := SeverityMedium
+			why := "Data store published to the host is reachable beyond the container network; unauthenticated defaults are common."
+			if stackHasAI {
+				sev = SeverityHigh
+				why = "Data store backing an AI stack (may hold prompts, chats, or embeddings) is published to all interfaces alongside AI services."
 			}
-		case isWebUI:
-			if hostAll {
-				out = append(out, Finding{
-					ID:       "exposed_ui",
-					Severity: SeverityHigh,
-					Title:    "Open WebUI/Gradio UI published to all interfaces",
-					File:     relCompose,
-					Line:     p.Line,
-					Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-					Why:      "Web UI for chatting with models should not be reachable from outside the host by default.",
-					Fix:      "Bind to 127.0.0.1 or put behind auth proxy. Consider internal-only network.",
-				})
-			}
-		case isVector:
-			if hostAll {
-				out = append(out, Finding{
-					ID:       "exposed_vector",
-					Severity: SeverityHigh,
-					Title:    "Vector DB published to host",
-					File:     relCompose,
-					Line:     p.Line,
-					Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-					Why:      "Vector database contains embeddings that may encode sensitive retrieved data.",
-					Fix:      "Do not publish vector DB ports to host. Access only via internal Docker network from trusted services.",
-				})
-			}
-		default:
-			if hostAll && p.HostPort != 0 {
-				// generic high for other AI-ish
-			}
+			out = append(out, Finding{
+				ID:       "exposed_datastore",
+				Severity: sev,
+				Title:    "Data store (Redis/Postgres) published to host",
+				File:     relCompose,
+				Line:     p.Line,
+				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
+				Why:      why,
+				Fix:      "Do not publish the data store port to the host. Bind to 127.0.0.1 or use an internal Docker network with credentials.",
+			})
 		}
 	}
 
@@ -264,6 +268,99 @@ func looksLikeSecretKeyName(k string) bool {
 	return strings.Contains(uk, "TOKEN") || strings.Contains(uk, "KEY") || strings.Contains(uk, "SECRET") ||
 		strings.Contains(uk, "PASS") || strings.Contains(uk, "API") || strings.Contains(uk, "HF_") ||
 		strings.Contains(uk, "AUTH")
+}
+
+// svcCategory buckets a service for exposure rules.
+type svcCategory int
+
+const (
+	catOther svcCategory = iota
+	catInference
+	catUI
+	catVector
+	catDatastore
+)
+
+func imageIsInference(img string) bool {
+	for _, s := range []string{"ollama", "vllm", "llama.cpp", "llamacpp", "lmstudio", "lm-studio"} {
+		if strings.Contains(img, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func imageIsUI(img string) bool {
+	for _, s := range []string{"open-webui", "openwebui", "gradio"} {
+		if strings.Contains(img, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func imageIsVector(img string) bool {
+	for _, s := range []string{"qdrant", "chroma", "weaviate", "milvus"} {
+		if strings.Contains(img, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func imageIsDatastore(img string) bool {
+	for _, s := range []string{"redis", "valkey", "postgres", "pgvector"} {
+		if strings.Contains(img, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyService categorizes a service by image name, then falls back to the
+// published host port so bare/unknown images on well-known AI ports are caught
+// (e.g. LM Studio / llama.cpp on 1234, Milvus on 19530).
+func classifyService(image string, hostPort int) svcCategory {
+	img := strings.ToLower(image)
+	switch {
+	case imageIsInference(img):
+		return catInference
+	case imageIsUI(img):
+		return catUI
+	case imageIsVector(img):
+		return catVector
+	case imageIsDatastore(img):
+		return catDatastore
+	}
+	switch hostPort {
+	case 11434, 1234:
+		return catInference
+	case 7860:
+		return catUI
+	case 6333, 19530:
+		return catVector
+	case 6379, 5432:
+		return catDatastore
+	}
+	return catOther
+}
+
+// composeHasAIComponent reports whether a compose file contains an inference,
+// UI, or vector service — used to raise data-store exposure to HIGH.
+func composeHasAIComponent(cf compose.File) bool {
+	for _, s := range cf.Services {
+		img := strings.ToLower(s.Image)
+		if imageIsInference(img) || imageIsUI(img) || imageIsVector(img) {
+			return true
+		}
+		for _, p := range s.Ports {
+			switch p.HostPort {
+			case 11434, 1234, 7860, 6333, 19530:
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func checkNetworkSeparation(cf compose.File, relCompose string) []Finding {

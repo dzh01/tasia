@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/joeyvictorino/tasia/internal/collect/compose"
@@ -29,8 +30,24 @@ type Collected struct {
 
 // EnvFile tracks .env* without values.
 type EnvFile struct {
-	Path      string
-	KeyNames  []string
+	Path string
+	Keys []EnvKey
+}
+
+// EnvKey is a secret-looking key name and the 1-based line it appears on.
+// Values are never captured.
+type EnvKey struct {
+	Name string
+	Line int
+}
+
+// KeyNames returns just the key names (values are never stored).
+func (e EnvFile) KeyNames() []string {
+	out := make([]string, 0, len(e.Keys))
+	for _, k := range e.Keys {
+		out = append(out, k.Name)
+	}
+	return out
 }
 
 // Dockerfile basic.
@@ -77,7 +94,7 @@ func WalkAndCollect(root string) (*Collected, error) {
 					ef.Path = r
 				}
 				c.EnvFiles = append(c.EnvFiles, ef)
-				c.SecretKeyNames = append(c.SecretKeyNames, ef.KeyNames...)
+				c.SecretKeyNames = append(c.SecretKeyNames, ef.KeyNames()...)
 			}
 		case lower == "dockerfile":
 			content, _ := os.ReadFile(path)
@@ -97,29 +114,61 @@ func WalkAndCollect(root string) (*Collected, error) {
 	c.SecretKeyNames = dedup(c.SecretKeyNames)
 	c.PublishedPorts = dedupInts(c.PublishedPorts)
 
-	// simple runtime detection from collected services
+	// runtime / interface / retrieval detection from collected service images
 	for _, cf := range c.ComposeFiles {
 		for _, svc := range cf.Services {
 			name := strings.ToLower(svc.Image)
-			switch {
-			case strings.Contains(name, "ollama"):
-				c.DetectedRuntimes = append(c.DetectedRuntimes, "ollama")
-			case strings.Contains(name, "open-webui"):
-				c.DetectedInterfaces = append(c.DetectedInterfaces, "open-webui")
-			case strings.Contains(name, "vllm"):
-				c.DetectedRuntimes = append(c.DetectedRuntimes, "vllm")
-			case strings.Contains(name, "qdrant"):
-				c.DetectedRetrieval = append(c.DetectedRetrieval, "qdrant")
-			case strings.Contains(name, "chroma"):
-				c.DetectedRetrieval = append(c.DetectedRetrieval, "chroma")
+			for label, needles := range map[string][]string{
+				"ollama":      {"ollama"},
+				"vllm":        {"vllm"},
+				"llama.cpp":   {"llama.cpp", "llamacpp"},
+				"lm-studio":   {"lmstudio", "lm-studio"},
+			} {
+				if containsAny(name, needles) {
+					c.DetectedRuntimes = append(c.DetectedRuntimes, label)
+				}
+			}
+			for label, needles := range map[string][]string{
+				"open-webui": {"open-webui", "openwebui"},
+				"gradio":     {"gradio"},
+			} {
+				if containsAny(name, needles) {
+					c.DetectedInterfaces = append(c.DetectedInterfaces, label)
+				}
+			}
+			for label, needles := range map[string][]string{
+				"qdrant":   {"qdrant"},
+				"chroma":   {"chroma"},
+				"weaviate": {"weaviate"},
+				"milvus":   {"milvus"},
+				"redis":    {"redis", "valkey"},
+				"postgres": {"postgres", "pgvector"},
+			} {
+				if containsAny(name, needles) {
+					c.DetectedRetrieval = append(c.DetectedRetrieval, label)
+				}
 			}
 		}
 	}
-	c.DetectedRuntimes = dedup(c.DetectedRuntimes)
-	c.DetectedInterfaces = dedup(c.DetectedInterfaces)
-	c.DetectedRetrieval = dedup(c.DetectedRetrieval)
+	c.DetectedRuntimes = sortStrings(dedup(c.DetectedRuntimes))
+	c.DetectedInterfaces = sortStrings(dedup(c.DetectedInterfaces))
+	c.DetectedRetrieval = sortStrings(dedup(c.DetectedRetrieval))
 
 	return c, nil
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(s, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortStrings(ss []string) []string {
+	sort.Strings(ss)
+	return ss
 }
 
 func extractFromCompose(c *Collected, f *compose.File) {
@@ -151,22 +200,22 @@ func parseEnvKeys(path string) (EnvFile, error) {
 	if err != nil {
 		return EnvFile{}, err
 	}
-	keys := []string{}
+	keys := []EnvKey{}
 	// naive: lines with KEY= , ignore values completely
 	lines := strings.Split(string(b), "\n")
 	re := regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s*=`)
-	for _, ln := range lines {
+	for i, ln := range lines {
 		m := re.FindStringSubmatch(ln)
 		if m != nil {
 			k := m[1]
 			// only collect likely secret names, but per spec we collect token key names
 			if looksLikeSecretKey(k) {
-				keys = append(keys, k)
+				keys = append(keys, EnvKey{Name: k, Line: i + 1})
 			}
 		}
 	}
 	// Path will be made relative by caller (WalkAndCollect) for consistency with compose files
-	return EnvFile{Path: path, KeyNames: keys}, nil
+	return EnvFile{Path: path, Keys: keys}, nil
 }
 
 func looksLikeSecretKey(k string) bool {
