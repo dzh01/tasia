@@ -183,10 +183,10 @@ func extractFromCompose(c *Collected, f *compose.File) {
 		for _, e := range svc.Environment {
 			if idx := strings.Index(e, "="); idx > 0 {
 				k := strings.TrimSpace(e[:idx])
-				if looksLikeSecretKey(k) {
+				if LooksLikeSecretKeyName(k) {
 					c.SecretKeyNames = append(c.SecretKeyNames, k)
 				}
-			} else if looksLikeSecretKey(e) {
+			} else if LooksLikeSecretKeyName(e) {
 				c.SecretKeyNames = append(c.SecretKeyNames, strings.TrimSpace(e))
 			}
 		}
@@ -209,7 +209,7 @@ func parseEnvKeys(path string) (EnvFile, error) {
 		if m != nil {
 			k := m[1]
 			// only collect likely secret names, but per spec we collect token key names
-			if looksLikeSecretKey(k) {
+			if LooksLikeSecretKeyName(k) {
 				keys = append(keys, EnvKey{Name: k, Line: i + 1})
 			}
 		}
@@ -218,7 +218,10 @@ func parseEnvKeys(path string) (EnvFile, error) {
 	return EnvFile{Path: path, Keys: keys}, nil
 }
 
-func looksLikeSecretKey(k string) bool {
+// LooksLikeSecretKeyName reports whether an environment key name suggests it
+// holds a credential. It inspects only the name, never the value. This is the
+// single source of truth shared by the collector and the rules engine.
+func LooksLikeSecretKeyName(k string) bool {
 	uk := strings.ToUpper(k)
 	return strings.Contains(uk, "TOKEN") || strings.Contains(uk, "KEY") || strings.Contains(uk, "SECRET") ||
 		strings.Contains(uk, "PASS") || strings.Contains(uk, "API") || strings.Contains(uk, "HF_") ||

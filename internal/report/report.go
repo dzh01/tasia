@@ -12,42 +12,38 @@ import (
 	"github.com/dzh01/tasia/internal/rules"
 )
 
-// Decide computes overall decision and risk from findings + flags.
+// Decide computes the overall decision and risk from the findings. A finding at
+// or above the fail-on threshold blocks; --strict blocks on MEDIUM and above.
 func Decide(findings []rules.Finding, failOn string, strict bool) (decision, risk string) {
-	maxSev := ""
-	blocked := false
-
-	threshold := strings.ToUpper(failOn)
+	threshold := rules.Severity(strings.ToUpper(failOn))
 	if threshold == "" {
-		threshold = "HIGH"
+		threshold = rules.SeverityHigh
 	}
 
-	sevOrder := map[string]int{"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+	maxSeverity := rules.SeverityLow
+	blocked := false
 	for _, f := range findings {
-		if sevOrder[f.Severity] > sevOrder[maxSev] {
-			maxSev = f.Severity
+		if f.Severity.Rank() > maxSeverity.Rank() {
+			maxSeverity = f.Severity
 		}
-		threshLevel := sevOrder[threshold]
-		fLevel := sevOrder[f.Severity]
-		if fLevel >= threshLevel {
+		if f.Severity.Rank() >= threshold.Rank() {
 			blocked = true
 		}
-		if strict && fLevel >= 2 { // medium+
+		if strict && f.Severity.Rank() >= rules.SeverityMedium.Rank() {
 			blocked = true
 		}
 	}
 
-	if maxSev == "" {
-		maxSev = "LOW"
-	}
-	risk = maxSev
-
+	decision = "PASS"
 	if blocked {
 		decision = "BLOCKED"
-	} else {
-		decision = "PASS"
 	}
-	return
+	return decision, string(maxSeverity)
+}
+
+// severityOrder is the display order for grouped output, most severe first.
+var severityOrder = []rules.Severity{
+	rules.SeverityCritical, rules.SeverityHigh, rules.SeverityMedium, rules.SeverityLow,
 }
 
 // PrintSummary prints the terminal view used by review and ci.
@@ -57,12 +53,8 @@ func PrintSummary(findings []rules.Finding, decision, risk string) {
 	fmt.Printf("Risk: %s\n", risk)
 
 	// group by severity for nice output
-	bySev := map[string][]rules.Finding{}
-	for _, f := range findings {
-		bySev[f.Severity] = append(bySev[f.Severity], f)
-	}
-	order := []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
-	for _, sev := range order {
+	bySev := groupBySev(findings)
+	for _, sev := range severityOrder {
 		list := bySev[sev]
 		if len(list) == 0 {
 			continue
@@ -168,7 +160,7 @@ func buildHardeningPlan(findings []rules.Finding, decision, risk string, c *coll
 
 	// group
 	bySev := groupBySev(findings)
-	for _, sev := range []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"} {
+	for _, sev := range severityOrder {
 		list := bySev[sev]
 		for _, f := range list {
 			b.WriteString(fmt.Sprintf("### %s: %s\n", f.Severity, f.Title))
@@ -312,8 +304,8 @@ func buildFindingsToon(findings []rules.Finding) string {
 	return b.String()
 }
 
-func groupBySev(fs []rules.Finding) map[string][]rules.Finding {
-	m := map[string][]rules.Finding{}
+func groupBySev(fs []rules.Finding) map[rules.Severity][]rules.Finding {
+	m := map[rules.Severity][]rules.Finding{}
 	for _, f := range fs {
 		m[f.Severity] = append(m[f.Severity], f)
 	}

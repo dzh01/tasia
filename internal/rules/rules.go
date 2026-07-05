@@ -10,196 +10,209 @@ import (
 	"github.com/dzh01/tasia/internal/collect/compose"
 )
 
-// Severity levels
+// Severity ranks a finding from informational (LOW) to must-fix (CRITICAL).
+type Severity string
+
 const (
-	SeverityCritical = "CRITICAL"
-	SeverityHigh     = "HIGH"
-	SeverityMedium   = "MEDIUM"
-	SeverityLow      = "LOW"
+	SeverityCritical Severity = "CRITICAL"
+	SeverityHigh     Severity = "HIGH"
+	SeverityMedium   Severity = "MEDIUM"
+	SeverityLow      Severity = "LOW"
 )
+
+// Rank orders severities so callers can compare and sort without duplicating
+// the ordering. Higher means more severe; unknown severities rank lowest.
+func (s Severity) Rank() int {
+	switch s {
+	case SeverityCritical:
+		return 4
+	case SeverityHigh:
+		return 3
+	case SeverityMedium:
+		return 2
+	case SeverityLow:
+		return 1
+	default:
+		return 0
+	}
+}
 
 // Finding is the core output model. Always includes file:line where possible.
 type Finding struct {
-	ID       string `json:"id"`
-	Severity string `json:"severity"`
-	Title    string `json:"title"`
-	File     string `json:"file"`
-	Line     int    `json:"line"`
-	Evidence string `json:"evidence"`
-	Why      string `json:"why"`
-	Fix      string `json:"fix"`
+	ID       string   `json:"id"`
+	Severity Severity `json:"severity"`
+	Title    string   `json:"title"`
+	File     string   `json:"file"`
+	Line     int      `json:"line"`
+	Evidence string   `json:"evidence"`
+	Why      string   `json:"why"`
+	Fix      string   `json:"fix"`
 }
 
-// Evaluate applies all deterministic rules to collected data. Returns sorted findings.
+// Evaluate applies every deterministic rule to the collected configuration and
+// returns the de-duplicated findings.
 func Evaluate(c *collect.Collected) []Finding {
-	var fs []Finding
+	var findings []Finding
 
-	// For each compose file, analyze services
 	for _, cf := range c.ComposeFiles {
-		relPath, _ := filepath.Rel(c.Root, cf.Path)
-		if relPath == "" || strings.HasPrefix(relPath, "..") {
-			relPath = cf.Path
-		}
+		relPath := composePath(c.Root, cf.Path)
 		stackHasAI := composeHasAIComponent(cf)
 		for _, svc := range cf.Services {
-			fs = append(fs, evaluateService(cf, relPath, svc, stackHasAI)...)
+			findings = append(findings, evaluateService(relPath, svc, stackHasAI)...)
 		}
-		// network separation check at compose level
-		fs = append(fs, checkNetworkSeparation(cf, relPath)...)
+		findings = append(findings, networkSeparationFinding(cf, relPath)...)
 	}
 
-	// env token keys
-	for _, ef := range c.EnvFiles {
-		for _, k := range ef.Keys {
-			fs = append(fs, Finding{
-				ID:       "env_token_key",
-				Severity: SeverityMedium,
-				Title:    fmt.Sprintf(".env contains token key name: %s", k.Name),
-				File:     ef.Path,
-				Line:     k.Line,
-				Evidence: k.Name,
-				Why:      "Token or secret key names in env files indicate credentials may be present. Never commit real secrets; use .env.example.",
-				Fix:      "Move real secrets out of repo; add .env to .gitignore; provide .env.example with placeholders only.",
-			})
-		}
-	}
+	findings = append(findings, envFileFindings(c.EnvFiles)...)
+	findings = append(findings, missingManifestFinding(c)...)
 
-	// missing ai stack manifest
-	hasManifest := c.HasManifest
-	for _, f := range c.OtherConfigs {
-		if strings.Contains(strings.ToLower(f), "ai-stack-manifest") {
-			hasManifest = true
-		}
-	}
-	if !hasManifest {
-		// only report if we saw compose (i.e. an AI stack)
-		if len(c.ComposeFiles) > 0 {
-			fs = append(fs, Finding{
-				ID:       "no_ai_stack_manifest",
-				Severity: SeverityLow,
-				Title:    "no AI stack manifest",
-				File:     ".",
-				Line:     0,
-				Evidence: "missing ai-stack-manifest.json",
-				Why:      "Without an inventory of runtimes, interfaces and retrieval, future reviews and audits are harder.",
-				Fix:      "Generate or commit ai-stack-manifest.json (Tasia can produce one).",
-			})
-		}
-	}
-
-	// docker socket and privileged from Dockerfiles or compose already handled in service
-	// later: broad bind mounts etc.
-
-	// dedup same-ish
-	fs = dedupFindings(fs)
-	return fs
+	return dedupeFindings(findings)
 }
 
-func evaluateService(cf compose.File, relCompose string, svc compose.Service, stackHasAI bool) []Finding {
-	var out []Finding
+// composePath renders a compose file's path relative to the scan root, falling
+// back to the absolute path when it lies outside the root.
+func composePath(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || rel == "" || strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return rel
+}
 
-	// A service on the host network publishes every listening port on all
-	// interfaces without any ports: mapping — the most common real exposure.
-	if strings.EqualFold(svc.NetworkMode, "host") {
-		if f, ok := hostNetworkFinding(svc, relCompose, stackHasAI); ok {
+// evaluateService runs every per-service rule in a readable checklist. Each rule
+// is a small, independent function; adding one is a single line here.
+func evaluateService(relCompose string, svc compose.Service, stackHasAI bool) []Finding {
+	var out []Finding
+	appendIf := func(f Finding, ok bool) {
+		if ok {
 			out = append(out, f)
 		}
 	}
 
-	// exposed inference / UI / vector / datastore on host ports
-	for _, p := range svc.Ports {
-		if p.HostPort <= 0 {
+	appendIf(hostNetworkFinding(svc, relCompose, stackHasAI))
+	out = append(out, exposedPortFindings(svc, relCompose, stackHasAI)...)
+	appendIf(privilegedFinding(svc, relCompose))
+	appendIf(latestImageFinding(svc, relCompose))
+	out = append(out, dockerSocketFindings(svc, relCompose)...)
+	out = append(out, broadBindMountFindings(svc, relCompose)...)
+	out = append(out, environmentFindings(svc, relCompose)...)
+
+	return out
+}
+
+// exposureTemplate holds the copy shared by every port-exposure finding of a
+// given service category, so the rule reads as data rather than repeated code.
+type exposureTemplate struct {
+	id, title, why, fix string
+}
+
+var exposureTemplates = map[svcCategory]exposureTemplate{
+	catInference: {
+		id:    "exposed_inference",
+		title: "Inference API published to all interfaces",
+		why:   "The inference API may be reachable by unintended systems on the host network.",
+		fix:   "Bind to localhost unless remote access is intentionally required. Use internal Docker network for other services.",
+	},
+	catUI: {
+		id:    "exposed_ui",
+		title: "Open WebUI/Gradio UI published to all interfaces",
+		why:   "Web UI for chatting with models should not be reachable from outside the host by default.",
+		fix:   "Bind to 127.0.0.1 or put behind auth proxy. Consider internal-only network.",
+	},
+	catVector: {
+		id:    "exposed_vector",
+		title: "Vector DB published to host",
+		why:   "Vector database contains embeddings that may encode sensitive retrieved data.",
+		fix:   "Do not publish vector DB ports to host. Access only via internal Docker network from trusted services.",
+	},
+}
+
+// exposedPortFindings flags every host-published port that belongs to a
+// recognized AI or data-store service.
+func exposedPortFindings(svc compose.Service, relCompose string, stackHasAI bool) []Finding {
+	var out []Finding
+	for _, port := range svc.Ports {
+		if port.HostPort <= 0 || !port.IsAllInterfaces() {
 			continue
 		}
-		if !p.IsAllInterfaces() {
+		category := classifyService(svc.Image, port.HostPort)
+		evidence := fmt.Sprintf("image=%s port=%s", svc.Image, port.Raw)
+
+		if category == catDatastore {
+			out = append(out, datastoreExposure(relCompose, port.Line, evidence, stackHasAI))
 			continue
 		}
-		// Classify by image first, then fall back to the published port number
-		// so bare/unknown images (e.g. LM Studio on 1234) are still caught.
-		switch classifyService(svc.Image, p.HostPort) {
-		case catInference:
+		if tmpl, ok := exposureTemplates[category]; ok {
 			out = append(out, Finding{
-				ID:       "exposed_inference",
+				ID:       tmpl.id,
 				Severity: SeverityHigh,
-				Title:    "Inference API published to all interfaces",
+				Title:    tmpl.title,
 				File:     relCompose,
-				Line:     p.Line,
-				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-				Why:      "The inference API may be reachable by unintended systems on the host network.",
-				Fix:      "Bind to localhost unless remote access is intentionally required. Use internal Docker network for other services.",
-			})
-		case catUI:
-			out = append(out, Finding{
-				ID:       "exposed_ui",
-				Severity: SeverityHigh,
-				Title:    "Open WebUI/Gradio UI published to all interfaces",
-				File:     relCompose,
-				Line:     p.Line,
-				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-				Why:      "Web UI for chatting with models should not be reachable from outside the host by default.",
-				Fix:      "Bind to 127.0.0.1 or put behind auth proxy. Consider internal-only network.",
-			})
-		case catVector:
-			out = append(out, Finding{
-				ID:       "exposed_vector",
-				Severity: SeverityHigh,
-				Title:    "Vector DB published to host",
-				File:     relCompose,
-				Line:     p.Line,
-				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-				Why:      "Vector database contains embeddings that may encode sensitive retrieved data.",
-				Fix:      "Do not publish vector DB ports to host. Access only via internal Docker network from trusted services.",
-			})
-		case catDatastore:
-			sev := SeverityMedium
-			why := "Data store published to the host is reachable beyond the container network; unauthenticated defaults are common."
-			if stackHasAI {
-				sev = SeverityHigh
-				why = "Data store backing an AI stack (may hold prompts, chats, or embeddings) is published to all interfaces alongside AI services."
-			}
-			out = append(out, Finding{
-				ID:       "exposed_datastore",
-				Severity: sev,
-				Title:    "Data store (Redis/Postgres) published to host",
-				File:     relCompose,
-				Line:     p.Line,
-				Evidence: fmt.Sprintf("image=%s port=%s", svc.Image, p.Raw),
-				Why:      why,
-				Fix:      "Do not publish the data store port to the host. Bind to 127.0.0.1 or use an internal Docker network with credentials.",
+				Line:     port.Line,
+				Evidence: evidence,
+				Why:      tmpl.why,
+				Fix:      tmpl.fix,
 			})
 		}
 	}
+	return out
+}
 
-	// privileged
-	if svc.Privileged {
-		out = append(out, Finding{
-			ID:       "privileged_container",
-			Severity: SeverityCritical,
-			Title:    "privileged: true",
-			File:     relCompose,
-			Line:     svc.PrivLine,
-			Evidence: fmt.Sprintf("service=%s privileged=true", svc.Name),
-			Why:      "Privileged containers have full host access and defeat container isolation.",
-			Fix:      "Remove privileged: true. Use specific capabilities only if absolutely required.",
-		})
+// datastoreExposure escalates to HIGH when the data store sits alongside AI
+// components (it likely holds prompts, chats, or embeddings).
+func datastoreExposure(relCompose string, line int, evidence string, stackHasAI bool) Finding {
+	severity := SeverityMedium
+	why := "Data store published to the host is reachable beyond the container network; unauthenticated defaults are common."
+	if stackHasAI {
+		severity = SeverityHigh
+		why = "Data store backing an AI stack (may hold prompts, chats, or embeddings) is published to all interfaces alongside AI services."
 	}
-
-	// image :latest or untagged (ignore registry-host ports and digests by
-	// only inspecting the final path segment for a tag).
-	if strings.HasSuffix(svc.Image, ":latest") || untagged(svc.Image) {
-		out = append(out, Finding{
-			ID:       "latest_image",
-			Severity: SeverityMedium,
-			Title:    "image uses latest",
-			File:     relCompose,
-			Line:     svc.ImageLine,
-			Evidence: svc.Image,
-			Why:      "latest tag is mutable and makes reproducible deploys and rollbacks impossible.",
-			Fix:      "Pin to a specific version tag or digest.",
-		})
+	return Finding{
+		ID:       "exposed_datastore",
+		Severity: severity,
+		Title:    "Data store (Redis/Postgres) published to host",
+		File:     relCompose,
+		Line:     line,
+		Evidence: evidence,
+		Why:      why,
+		Fix:      "Do not publish the data store port to the host. Bind to 127.0.0.1 or use an internal Docker network with credentials.",
 	}
+}
 
-	// docker socket mount (common dangerous pattern)
+func privilegedFinding(svc compose.Service, relCompose string) (Finding, bool) {
+	if !svc.Privileged {
+		return Finding{}, false
+	}
+	return Finding{
+		ID:       "privileged_container",
+		Severity: SeverityCritical,
+		Title:    "privileged: true",
+		File:     relCompose,
+		Line:     svc.PrivLine,
+		Evidence: fmt.Sprintf("service=%s privileged=true", svc.Name),
+		Why:      "Privileged containers have full host access and defeat container isolation.",
+		Fix:      "Remove privileged: true. Use specific capabilities only if absolutely required.",
+	}, true
+}
+
+func latestImageFinding(svc compose.Service, relCompose string) (Finding, bool) {
+	if !strings.HasSuffix(svc.Image, ":latest") && !untagged(svc.Image) {
+		return Finding{}, false
+	}
+	return Finding{
+		ID:       "latest_image",
+		Severity: SeverityMedium,
+		Title:    "image uses latest",
+		File:     relCompose,
+		Line:     svc.ImageLine,
+		Evidence: svc.Image,
+		Why:      "latest tag is mutable and makes reproducible deploys and rollbacks impossible.",
+		Fix:      "Pin to a specific version tag or digest.",
+	}, true
+}
+
+func dockerSocketFindings(svc compose.Service, relCompose string) []Finding {
+	var out []Finding
 	for _, v := range svc.Volumes {
 		if strings.Contains(v, "/var/run/docker.sock") {
 			out = append(out, Finding{
@@ -214,8 +227,11 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service, st
 			})
 		}
 	}
+	return out
+}
 
-	// broad bind mount like .:/app
+func broadBindMountFindings(svc compose.Service, relCompose string) []Finding {
+	var out []Finding
 	for _, v := range svc.Volumes {
 		broad := strings.HasPrefix(v, ".:") || strings.HasPrefix(v, "./:") || strings.Contains(v, ":/app")
 		if broad && !isReadOnlyMount(v) {
@@ -231,45 +247,95 @@ func evaluateService(cf compose.File, relCompose string, svc compose.Service, st
 			})
 		}
 	}
+	return out
+}
 
-	// environment: token key names (from compose) + permissive CORS patterns (HIGH)
-	for _, e := range svc.Environment {
-		kv := strings.SplitN(e, "=", 2)
-		k := strings.TrimSpace(kv[0])
-		v := ""
-		if len(kv) > 1 {
-			v = strings.TrimSpace(kv[1])
-		}
-		uk := strings.ToUpper(k)
-		if looksLikeSecretKeyName(k) {
+// environmentFindings inspects compose environment entries for secret key names
+// and permissive CORS settings. Values are never emitted, only key names.
+func environmentFindings(svc compose.Service, relCompose string) []Finding {
+	var out []Finding
+	for _, entry := range svc.Environment {
+		key, value, _ := strings.Cut(entry, "=")
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+
+		if collect.LooksLikeSecretKeyName(key) {
 			out = append(out, Finding{
 				ID:       "env_token_key",
 				Severity: SeverityMedium,
-				Title:    fmt.Sprintf("service env contains token key name: %s", k),
+				Title:    fmt.Sprintf("service env contains token key name: %s", key),
 				File:     relCompose,
 				Line:     svc.EnvLine,
-				Evidence: k,
+				Evidence: key,
 				Why:      "Token/secret key names in compose environment may indicate credentials. Values are not inspected or emitted.",
 				Fix:      "Inject real secrets at deploy time (e.g. secrets, sops, platform env); commit only placeholders.",
 			})
 		}
-		if uk == "OLLAMA_ORIGINS" || strings.Contains(uk, "CORS") || strings.Contains(uk, "ALLOW_ORIGINS") {
-			if v == "*" || strings.Contains(v, "*") || strings.TrimSpace(v) == "" {
-				out = append(out, Finding{
-					ID:       "permissive_cors",
-					Severity: SeverityHigh,
-					Title:    "permissive CORS (e.g. OLLAMA_ORIGINS=*)",
-					File:     relCompose,
-					Line:     svc.EnvLine,
-					Evidence: e,
-					Why:      "Wildcard or empty CORS on AI endpoints allows arbitrary web pages to make cross-origin requests to the model or UI.",
-					Fix:      "Set explicit allowlist for OLLAMA_ORIGINS (or equivalent), e.g. http://localhost:*, or remove the var and use a reverse proxy with controlled CORS.",
-				})
-			}
+		if isCORSKey(key) && isPermissiveOrigin(value) {
+			out = append(out, Finding{
+				ID:       "permissive_cors",
+				Severity: SeverityHigh,
+				Title:    "permissive CORS (e.g. OLLAMA_ORIGINS=*)",
+				File:     relCompose,
+				Line:     svc.EnvLine,
+				Evidence: entry,
+				Why:      "Wildcard or empty CORS on AI endpoints allows arbitrary web pages to make cross-origin requests to the model or UI.",
+				Fix:      "Set explicit allowlist for OLLAMA_ORIGINS (or equivalent), e.g. http://localhost:*, or remove the var and use a reverse proxy with controlled CORS.",
+			})
 		}
 	}
-
 	return out
+}
+
+func isCORSKey(key string) bool {
+	upper := strings.ToUpper(key)
+	return upper == "OLLAMA_ORIGINS" || strings.Contains(upper, "CORS") || strings.Contains(upper, "ALLOW_ORIGINS")
+}
+
+func isPermissiveOrigin(value string) bool {
+	return value == "" || strings.Contains(value, "*")
+}
+
+// envFileFindings reports secret-looking key names discovered in .env* files.
+func envFileFindings(envFiles []collect.EnvFile) []Finding {
+	var out []Finding
+	for _, ef := range envFiles {
+		for _, key := range ef.Keys {
+			out = append(out, Finding{
+				ID:       "env_token_key",
+				Severity: SeverityMedium,
+				Title:    fmt.Sprintf(".env contains token key name: %s", key.Name),
+				File:     ef.Path,
+				Line:     key.Line,
+				Evidence: key.Name,
+				Why:      "Token or secret key names in env files indicate credentials may be present. Never commit real secrets; use .env.example.",
+				Fix:      "Move real secrets out of repo; add .env to .gitignore; provide .env.example with placeholders only.",
+			})
+		}
+	}
+	return out
+}
+
+// missingManifestFinding notes an AI stack that lacks an inventory manifest.
+func missingManifestFinding(c *collect.Collected) []Finding {
+	if len(c.ComposeFiles) == 0 || c.HasManifest {
+		return nil
+	}
+	for _, f := range c.OtherConfigs {
+		if strings.Contains(strings.ToLower(f), "ai-stack-manifest") {
+			return nil
+		}
+	}
+	return []Finding{{
+		ID:       "no_ai_stack_manifest",
+		Severity: SeverityLow,
+		Title:    "no AI stack manifest",
+		File:     ".",
+		Line:     0,
+		Evidence: "missing ai-stack-manifest.json",
+		Why:      "Without an inventory of runtimes, interfaces and retrieval, future reviews and audits are harder.",
+		Fix:      "Generate or commit ai-stack-manifest.json (Tasia can produce one).",
+	}}
 }
 
 // untagged reports whether an image reference has no explicit tag, inspecting
@@ -292,13 +358,6 @@ func isReadOnlyMount(v string) bool {
 	return len(parts) > 0 && parts[len(parts)-1] == "ro"
 }
 
-func looksLikeSecretKeyName(k string) bool {
-	uk := strings.ToUpper(k)
-	return strings.Contains(uk, "TOKEN") || strings.Contains(uk, "KEY") || strings.Contains(uk, "SECRET") ||
-		strings.Contains(uk, "PASS") || strings.Contains(uk, "API") || strings.Contains(uk, "HF_") ||
-		strings.Contains(uk, "AUTH")
-}
-
 // svcCategory buckets a service for exposure rules.
 type svcCategory int
 
@@ -310,74 +369,55 @@ const (
 	catDatastore
 )
 
-func imageIsInference(img string) bool {
-	for _, s := range []string{"ollama", "vllm", "llama.cpp", "llamacpp", "lmstudio", "lm-studio"} {
-		if strings.Contains(img, s) {
-			return true
-		}
-	}
-	return false
+// imageKeywords maps a category to the image-name substrings that identify it.
+var imageKeywords = map[svcCategory][]string{
+	catInference: {"ollama", "vllm", "llama.cpp", "llamacpp", "lmstudio", "lm-studio"},
+	catUI:        {"open-webui", "openwebui", "gradio"},
+	catVector:    {"qdrant", "chroma", "weaviate", "milvus"},
+	catDatastore: {"redis", "valkey", "postgres", "pgvector"},
 }
 
-func imageIsUI(img string) bool {
-	for _, s := range []string{"open-webui", "openwebui", "gradio"} {
-		if strings.Contains(img, s) {
-			return true
-		}
-	}
-	return false
+// portCategory maps a well-known host port to its service category, so bare or
+// unknown images are still classified (e.g. LM Studio on 1234, Milvus on 19530).
+var portCategory = map[int]svcCategory{
+	11434: catInference,
+	1234:  catInference,
+	7860:  catUI,
+	6333:  catVector,
+	19530: catVector,
+	6379:  catDatastore,
+	5432:  catDatastore,
 }
 
-func imageIsVector(img string) bool {
-	for _, s := range []string{"qdrant", "chroma", "weaviate", "milvus"} {
-		if strings.Contains(img, s) {
-			return true
-		}
-	}
-	return false
-}
-
-func imageIsDatastore(img string) bool {
-	for _, s := range []string{"redis", "valkey", "postgres", "pgvector"} {
-		if strings.Contains(img, s) {
-			return true
-		}
-	}
-	return false
-}
-
-// classifyService categorizes a service by image name, then falls back to the
-// published host port so bare/unknown images on well-known AI ports are caught
-// (e.g. LM Studio / llama.cpp on 1234, Milvus on 19530).
+// classifyService categorizes a service by image name first, then falls back to
+// the published host port. Image name is checked in a fixed category order so
+// classification is deterministic.
 func classifyService(image string, hostPort int) svcCategory {
 	img := strings.ToLower(image)
-	switch {
-	case imageIsInference(img):
-		return catInference
-	case imageIsUI(img):
-		return catUI
-	case imageIsVector(img):
-		return catVector
-	case imageIsDatastore(img):
-		return catDatastore
+	for _, category := range []svcCategory{catInference, catUI, catVector, catDatastore} {
+		if containsAny(img, imageKeywords[category]) {
+			return category
+		}
 	}
-	switch hostPort {
-	case 11434, 1234:
-		return catInference
-	case 7860:
-		return catUI
-	case 6333, 19530:
-		return catVector
-	case 6379, 5432:
-		return catDatastore
+	return portCategory[hostPort] // catOther (zero value) when unknown
+}
+
+func containsAny(s string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(s, n) {
+			return true
+		}
 	}
-	return catOther
+	return false
 }
 
 // hostNetworkFinding returns an exposure finding for a recognized AI/datastore
 // service running on the host network (network_mode: host). Such a service is
 // reachable on all host interfaces with no ports: mapping to inspect.
 func hostNetworkFinding(svc compose.Service, relCompose string, stackHasAI bool) (Finding, bool) {
+	if !strings.EqualFold(svc.NetworkMode, "host") {
+		return Finding{}, false
+	}
 	base := Finding{
 		File:     relCompose,
 		Line:     svc.NetworkModeLine,
@@ -415,14 +455,15 @@ func hostNetworkFinding(svc compose.Service, relCompose string, stackHasAI bool)
 // composeHasAIComponent reports whether a compose file contains an inference,
 // UI, or vector service — used to raise data-store exposure to HIGH.
 func composeHasAIComponent(cf compose.File) bool {
-	for _, s := range cf.Services {
-		img := strings.ToLower(s.Image)
-		if imageIsInference(img) || imageIsUI(img) || imageIsVector(img) {
+	isAI := func(c svcCategory) bool {
+		return c == catInference || c == catUI || c == catVector
+	}
+	for _, svc := range cf.Services {
+		if isAI(classifyService(svc.Image, 0)) {
 			return true
 		}
-		for _, p := range s.Ports {
-			switch p.HostPort {
-			case 11434, 1234, 7860, 6333, 19530:
+		for _, port := range svc.Ports {
+			if isAI(portCategory[port.HostPort]) {
 				return true
 			}
 		}
@@ -430,49 +471,53 @@ func composeHasAIComponent(cf compose.File) bool {
 	return false
 }
 
-func checkNetworkSeparation(cf compose.File, relCompose string) []Finding {
-	var out []Finding
-	hasInternal := false
+// networkSeparationFinding flags a multi-service stack that publishes ports but
+// defines no internal-only network to limit lateral movement.
+func networkSeparationFinding(cf compose.File, relCompose string) []Finding {
 	for _, n := range cf.Networks {
 		if n.Internal {
-			hasInternal = true
+			return nil
 		}
 	}
-	// if services publish ports and no internal net, note MEDIUM
-	if !hasInternal {
-		hasPub := false
-		line := 0
-		for _, s := range cf.Services {
-			if line == 0 && s.PortsLine > 0 {
-				line = s.PortsLine
-			}
-			for _, p := range s.Ports {
-				if p.HostPort > 0 {
-					hasPub = true
-				}
-			}
+	if len(cf.Services) <= 1 {
+		return nil
+	}
+
+	publishLine := 0
+	published := false
+	for _, svc := range cf.Services {
+		if publishLine == 0 && svc.PortsLine > 0 {
+			publishLine = svc.PortsLine
 		}
-		if hasPub && len(cf.Services) > 1 {
-			out = append(out, Finding{
-				ID:       "no_internal_network",
-				Severity: SeverityMedium,
-				Title:    "no internal Docker network separation",
-				File:     relCompose,
-				Line:     line,
-				Evidence: "no internal: true network defined",
-				Why:      "Services share the default Docker bridge network and can reach each other freely; an internal network limits lateral movement.",
-				Fix:      "Define an internal network and attach AI services to it. Publish only the minimum gateway if needed.",
-			})
+		for _, port := range svc.Ports {
+			if port.HostPort > 0 {
+				published = true
+			}
 		}
 	}
-	return out
+	if !published {
+		return nil
+	}
+
+	return []Finding{{
+		ID:       "no_internal_network",
+		Severity: SeverityMedium,
+		Title:    "no internal Docker network separation",
+		File:     relCompose,
+		Line:     publishLine,
+		Evidence: "no internal: true network defined",
+		Why:      "Services share the default Docker bridge network and can reach each other freely; an internal network limits lateral movement.",
+		Fix:      "Define an internal network and attach AI services to it. Publish only the minimum gateway if needed.",
+	}}
 }
 
-func dedupFindings(in []Finding) []Finding {
-	seen := map[string]bool{}
-	out := []Finding{}
+// dedupeFindings removes findings that are identical in id, location, and
+// evidence (the same issue reported by more than one rule path).
+func dedupeFindings(in []Finding) []Finding {
+	seen := make(map[string]bool, len(in))
+	out := make([]Finding, 0, len(in))
 	for _, f := range in {
-		key := f.ID + "|" + f.File + "|" + strconv.Itoa(f.Line) + "|" + f.Evidence
+		key := strings.Join([]string{f.ID, f.File, strconv.Itoa(f.Line), f.Evidence}, "\x00")
 		if !seen[key] {
 			seen[key] = true
 			out = append(out, f)

@@ -162,7 +162,7 @@ func TestDatastoreExposureSeverity(t *testing.T) {
 			},
 		}},
 	}
-	var redisSev string
+	var redisSev Severity
 	for _, f := range Evaluate(withAI) {
 		if f.ID == "exposed_datastore" {
 			redisSev = f.Severity
@@ -186,7 +186,7 @@ func TestDatastoreExposureSeverity(t *testing.T) {
 			},
 		}},
 	}
-	var pgSev string
+	var pgSev Severity
 	for _, f := range Evaluate(noAI) {
 		if f.ID == "exposed_datastore" {
 			pgSev = f.Severity
@@ -272,23 +272,10 @@ func TestNoSecretValues(t *testing.T) {
 	}
 	fs := Evaluate(c)
 	for _, f := range fs {
-		if containsAny(f.Evidence, []string{"sk-", "hf_", "realvalue"}) || containsAny(f.Why, []string{"sk-"}) {
+		if containsAny(f.Evidence, []string{"sk-", "hf_", "realvalue"}) || strings.Contains(f.Why, "sk-") {
 			t.Errorf("possible secret leak in finding: %+v", f)
 		}
 	}
-}
-
-func containsAny(s string, bad []string) bool {
-	for _, b := range bad {
-		if len(b) > 0 && (len(s) > 0 && (s == b || len(s) > 3 && contains(s, b))) {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || (len(sub) > 0 && (s[0:len(sub)] == sub || contains(s[1:], sub))))
 }
 
 func TestLatestImageEdgeCases(t *testing.T) {
