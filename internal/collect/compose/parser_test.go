@@ -108,3 +108,62 @@ func TestParseLinesAndPorts(t *testing.T) {
 		t.Errorf("map-form ports not parsed: web=%d vec=%d", webHP, vecHP)
 	}
 }
+
+func TestParseHostNetworkVolumesAndHostIP(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "docker-compose.yml")
+	content := `services:
+  ollama:
+    image: ollama/ollama:0.3
+    network_mode: host
+  portainer:
+    image: portainer/portainer:2.0
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+  webui:
+    image: ghcr.io/open-webui/open-webui:0.3
+    ports:
+      - target: 8080
+        published: 3000
+        host_ip: 127.0.0.1
+`
+	if err := os.WriteFile(f, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(f)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var nm, vol, hostIP bool
+	for _, s := range p.Services {
+		if s.Name == "ollama" && s.NetworkMode == "host" && s.NetworkModeLine > 0 {
+			nm = true
+		}
+		if s.Name == "portainer" {
+			for _, v := range s.Volumes {
+				if v == "/var/run/docker.sock:/var/run/docker.sock:ro" {
+					vol = true
+				}
+			}
+		}
+		if s.Name == "webui" {
+			for _, pt := range s.Ports {
+				if pt.HostIP == "127.0.0.1" && !pt.IsAllInterfaces() {
+					hostIP = true
+				}
+			}
+		}
+	}
+	if !nm {
+		t.Error("network_mode: host not captured")
+	}
+	if !vol {
+		t.Error("long-form docker.sock volume not flattened to host:container:ro")
+	}
+	if !hostIP {
+		t.Error("long-form host_ip 127.0.0.1 not recognized as localhost-bound")
+	}
+}

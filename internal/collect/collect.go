@@ -203,7 +203,7 @@ func parseEnvKeys(path string) (EnvFile, error) {
 	keys := []EnvKey{}
 	// naive: lines with KEY= , ignore values completely
 	lines := strings.Split(string(b), "\n")
-	re := regexp.MustCompile(`^\s*([A-Za-z0-9_]+)\s*=`)
+	re := regexp.MustCompile(`^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=`)
 	for i, ln := range lines {
 		m := re.FindStringSubmatch(ln)
 		if m != nil {

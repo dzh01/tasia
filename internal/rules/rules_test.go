@@ -197,6 +197,72 @@ func TestDatastoreExposureSeverity(t *testing.T) {
 	}
 }
 
+func TestNetworkModeHostExposure(t *testing.T) {
+	c := &collect.Collected{
+		Root: ".",
+		ComposeFiles: []compose.File{{
+			Path: "docker-compose.yml",
+			Services: []compose.Service{
+				{Name: "ollama", Image: "ollama/ollama:0.3", NetworkMode: "host", NetworkModeLine: 4},
+			},
+		}},
+	}
+	var found *Finding
+	for _, f := range Evaluate(c) {
+		if f.ID == "exposed_inference" {
+			ff := f
+			found = &ff
+		}
+	}
+	if found == nil {
+		t.Fatal("network_mode: host inference exposure not detected")
+	}
+	if found.Severity != SeverityHigh || found.Line != 4 || !strings.Contains(found.Evidence, "network_mode: host") {
+		t.Errorf("bad host-network finding: %+v", *found)
+	}
+}
+
+func TestHostIPLocalhostNotFlagged(t *testing.T) {
+	// Long-form port explicitly bound to 127.0.0.1 must NOT be an exposure.
+	c := &collect.Collected{
+		Root: ".",
+		ComposeFiles: []compose.File{{
+			Path: "docker-compose.yml",
+			Services: []compose.Service{
+				{Name: "ollama", Image: "ollama/ollama:0.3",
+					Ports: []compose.PortMapping{{HostPort: 11434, TargetPort: 11434, Raw: "11434", HostIP: "127.0.0.1", Line: 5}}},
+			},
+		}},
+	}
+	for _, f := range Evaluate(c) {
+		if f.ID == "exposed_inference" {
+			t.Errorf("localhost-bound (host_ip 127.0.0.1) port must not be flagged: %+v", f)
+		}
+	}
+}
+
+func TestLongFormDockerSocket(t *testing.T) {
+	c := &collect.Collected{
+		Root: ".",
+		ComposeFiles: []compose.File{{
+			Path: "docker-compose.yml",
+			Services: []compose.Service{
+				{Name: "ui", Image: "portainer/portainer:2.0", VolumesLine: 4,
+					Volumes: []string{"/var/run/docker.sock:/var/run/docker.sock"}},
+			},
+		}},
+	}
+	found := false
+	for _, f := range Evaluate(c) {
+		if f.ID == "docker_socket_mount" && f.Severity == SeverityCritical {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("docker.sock mount (long-form) not detected")
+	}
+}
+
 func TestNoSecretValues(t *testing.T) {
 	// ensure rule never invents values; here just env keys
 	c := &collect.Collected{

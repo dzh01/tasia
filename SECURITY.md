@@ -17,8 +17,10 @@ Tasia is a local, static analysis tool. Explicitly:
 
 - **Tasia never transmits your files or secret values.** It reads config files on
   your machine and writes a `.tasia/` pack locally. The only optional network call
-  is `tasia explain`, which sends **only the redacted findings** to a local Ollama
-  you run yourself.
+  is `tasia explain`, which sends **only the findings** to a local Ollama you run
+  yourself. Findings never carry secret values by construction (evidence is a key
+  name, port, image, or the flagged config token), and a defense-in-depth redactor
+  scrubs common token formats before sending.
 - **Tasia never scans the internet.** It does not probe hosts, open sockets to your
   services, or reach out to any remote endpoint (other than the local Ollama above).
 - **Tasia does not read or print secret values.** It reports secret **key names**

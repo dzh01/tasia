@@ -20,14 +20,14 @@ const (
 
 // Finding is the core output model. Always includes file:line where possible.
 type Finding struct {
-	ID       string
-	Severity string
-	Title    string
-	File     string
-	Line     int
-	Evidence string
-	Why      string
-	Fix      string
+	ID       string `json:"id"`
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Evidence string `json:"evidence"`
+	Why      string `json:"why"`
+	Fix      string `json:"fix"`
 }
 
 // Evaluate applies all deterministic rules to collected data. Returns sorted findings.
@@ -98,13 +98,20 @@ func Evaluate(c *collect.Collected) []Finding {
 func evaluateService(cf compose.File, relCompose string, svc compose.Service, stackHasAI bool) []Finding {
 	var out []Finding
 
+	// A service on the host network publishes every listening port on all
+	// interfaces without any ports: mapping — the most common real exposure.
+	if strings.EqualFold(svc.NetworkMode, "host") {
+		if f, ok := hostNetworkFinding(svc, relCompose, stackHasAI); ok {
+			out = append(out, f)
+		}
+	}
+
 	// exposed inference / UI / vector / datastore on host ports
 	for _, p := range svc.Ports {
 		if p.HostPort <= 0 {
 			continue
 		}
-		hostAll := !strings.HasPrefix(p.Raw, "127.0.0.1") && !strings.HasPrefix(p.Raw, "localhost")
-		if !hostAll {
+		if !p.IsAllInterfaces() {
 			continue
 		}
 		// Classify by image first, then fall back to the published port number
@@ -343,6 +350,44 @@ func classifyService(image string, hostPort int) svcCategory {
 		return catDatastore
 	}
 	return catOther
+}
+
+// hostNetworkFinding returns an exposure finding for a recognized AI/datastore
+// service running on the host network (network_mode: host). Such a service is
+// reachable on all host interfaces with no ports: mapping to inspect.
+func hostNetworkFinding(svc compose.Service, relCompose string, stackHasAI bool) (Finding, bool) {
+	base := Finding{
+		File:     relCompose,
+		Line:     svc.NetworkModeLine,
+		Evidence: fmt.Sprintf("image=%s network_mode: host", svc.Image),
+		Fix:      "Remove network_mode: host and publish only the needed ports bound to 127.0.0.1, or attach to an internal Docker network.",
+	}
+	switch classifyService(svc.Image, 0) {
+	case catInference:
+		base.ID, base.Severity = "exposed_inference", SeverityHigh
+		base.Title = "Inference API on host network (all interfaces)"
+		base.Why = "network_mode: host puts the inference API on every host interface with no port isolation."
+	case catUI:
+		base.ID, base.Severity = "exposed_ui", SeverityHigh
+		base.Title = "UI on host network (all interfaces)"
+		base.Why = "network_mode: host exposes the model UI on every host interface."
+	case catVector:
+		base.ID, base.Severity = "exposed_vector", SeverityHigh
+		base.Title = "Vector DB on host network (all interfaces)"
+		base.Why = "network_mode: host exposes the vector database on every host interface."
+	case catDatastore:
+		base.ID = "exposed_datastore"
+		base.Title = "Data store on host network (all interfaces)"
+		if stackHasAI {
+			base.Severity = SeverityHigh
+		} else {
+			base.Severity = SeverityMedium
+		}
+		base.Why = "network_mode: host exposes the data store on every host interface."
+	default:
+		return Finding{}, false
+	}
+	return base, true
 }
 
 // composeHasAIComponent reports whether a compose file contains an inference,

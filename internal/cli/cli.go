@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"strings"
 
 	"github.com/dzh01/tasia/internal/collect"
 	"github.com/dzh01/tasia/internal/llm"
@@ -18,6 +20,18 @@ var (
 	Commit  = "none"
 	Date    = "unknown"
 )
+
+// versionString prefers the ldflags value, then the module version embedded by
+// `go install` (so `go install ...@latest` shows the real tag, not "dev").
+func versionString() string {
+	if Version != "" && Version != "dev" {
+		return Version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return Version
+}
 
 // Run parses args and dispatches commands. Thin layer.
 func Run(args []string) error {
@@ -39,7 +53,7 @@ func Run(args []string) error {
 	case "explain":
 		return runExplain(args[1:])
 	case "version", "--version", "-v":
-		fmt.Printf("tasia %s (commit %s, built %s)\n", Version, Commit, Date)
+		fmt.Printf("tasia %s (commit %s, built %s)\n", versionString(), Commit, Date)
 		return nil
 	case "help", "-h", "--help":
 		printUsage()
@@ -176,10 +190,20 @@ func runInstall(args []string) error {
 	}
 	hookPath := filepath.Join(hookDir, "pre-push")
 
+	const marker = "# Installed by tasia install --pre-push"
+
+	// Never silently clobber a pre-existing, non-tasia hook (e.g. husky).
+	if existing, err := os.ReadFile(hookPath); err == nil && !strings.Contains(string(existing), marker) {
+		fmt.Fprintf(os.Stderr, "A pre-push hook already exists at %s and was not installed by tasia.\n", hookPath)
+		fmt.Fprintln(os.Stderr, "Refusing to overwrite it. To add tasia, append this line to that hook:")
+		fmt.Fprintln(os.Stderr, "  command -v tasia >/dev/null 2>&1 && tasia ci --path . --fail-on high")
+		return fmt.Errorf("existing pre-push hook not overwritten")
+	}
+
 	// Resolve tasia from PATH at hook-run time so the hook keeps working if the
 	// binary is upgraded or moved. Fail closed (block the push) if it is missing.
 	hookContent := "#!/bin/sh\n" +
-		"# Installed by tasia install --pre-push\n" +
+		marker + "\n" +
 		"if ! command -v tasia >/dev/null 2>&1; then\n" +
 		"  echo \"tasia not found in PATH — install it or run: tasia uninstall --pre-push\" >&2\n" +
 		"  exit 1\n" +

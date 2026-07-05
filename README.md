@@ -56,7 +56,7 @@ Tasia will:
 
 | Finding | Severity |
 |---------|----------|
-| Inference API (Ollama / vLLM / llama.cpp / LM Studio) published to all interfaces | HIGH |
+| Inference API (Ollama / vLLM / llama.cpp / LM Studio) published to all interfaces (incl. `network_mode: host`) | HIGH |
 | Open WebUI / Gradio UI published to all interfaces | HIGH |
 | Vector DB (Qdrant / Chroma / Weaviate / Milvus) published to host | HIGH |
 | Data store (Redis / Postgres) published to host | HIGH alongside AI, else MEDIUM |
@@ -136,10 +136,14 @@ tasia explain --ollama llama3.1
 tasia explain --ollama llama3.1 --ollama-host 127.0.0.1:11434
 ```
 
-`explain` POSTs **only the redacted findings** (no values, no secrets, no raw
-files) to your local Ollama at `http://localhost:11434/api/generate` and writes
-the prose to `.tasia/LLM_REVIEW.md`. `LLM_REVIEW.md` is written **only** by
-`explain` — a plain `review` never implies an LLM was consulted.
+`explain` POSTs **only the findings** to your local Ollama at
+`http://localhost:11434/api/generate` and writes the prose to
+`.tasia/LLM_REVIEW.md`. Findings never contain secret **values** by construction
+(evidence is always a key name, port, image, or the flagged config token itself),
+and a defense-in-depth redactor additionally scrubs common token formats
+(OpenAI/HF/GitHub/AWS/Google/Slack keys, JWTs, `user:pass@` URLs) before sending.
+`LLM_REVIEW.md` is written **only** by `explain` — a plain `review` never implies
+an LLM was consulted.
 
 The deterministic rules are always authoritative. The LLM is never required:
 `review` and `ci` never call it and never fail because of it. If Ollama is

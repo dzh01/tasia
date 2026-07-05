@@ -20,17 +20,19 @@ type File struct {
 
 // Service holds name + relevant fields with lines where possible.
 type Service struct {
-	Name        string
-	Image       string
-	ImageLine   int
-	Ports       []PortMapping
-	PortsLine   int // line of the 'ports:' key if present
-	Volumes     []string
-	VolumesLine int // line of the 'volumes:' key if present
-	Privileged  bool
-	PrivLine    int
-	Environment []string // "KEY=val" entries (from map or list form)
-	EnvLine     int      // line of the 'environment:' key if present
+	Name            string
+	Image           string
+	ImageLine       int
+	Ports           []PortMapping
+	PortsLine       int // line of the 'ports:' key if present
+	Volumes         []string
+	VolumesLine     int // line of the 'volumes:' key if present
+	Privileged      bool
+	PrivLine        int
+	Environment     []string // "KEY=val" entries (from map or list form)
+	EnvLine         int      // line of the 'environment:' key if present
+	NetworkMode     string   // value of network_mode: (e.g. "host")
+	NetworkModeLine int
 	// Raw for future
 }
 
@@ -38,7 +40,28 @@ type PortMapping struct {
 	HostPort   int
 	TargetPort int
 	Raw        string // original "11434:11434" or "127.0.0.1:..."
+	HostIP     string // explicit host IP (long-form host_ip:, or derived from short form)
 	Line       int
+}
+
+// IsAllInterfaces reports whether the published port is reachable on all host
+// interfaces (0.0.0.0) rather than bound to localhost. Handles both the short
+// form "127.0.0.1:3000:8080" and the long form with an explicit host_ip.
+func (p PortMapping) IsAllInterfaces() bool {
+	ip := p.HostIP
+	if ip == "" {
+		parts := strings.Split(strings.Trim(p.Raw, `"' `), ":")
+		if len(parts) >= 3 { // ip:host:container
+			ip = parts[0]
+		}
+	}
+	switch strings.TrimSpace(ip) {
+	case "127.0.0.1", "localhost", "::1":
+		return false
+	default:
+		// empty (no bind = all interfaces), 0.0.0.0, ::, or a specific LAN IP
+		return true
+	}
 }
 
 type Network struct {
@@ -101,12 +124,31 @@ func Parse(path string) (*File, error) {
 				svc.Privileged = true
 				svc.PrivLine = privNode.Line
 			}
-			// volumes for broad mounts later
+			// network_mode: (e.g. host) — a service on the host network publishes
+			// its ports on all interfaces without any ports: mapping.
+			nmNode := getMapValue(svcNode, "network_mode")
+			if nmNode != nil {
+				svc.NetworkMode = strings.Trim(nmNode.Value, `"' `)
+				svc.NetworkModeLine = nmNode.Line
+			}
+			// volumes for broad mounts / docker.sock — handle both short form
+			// ("host:container[:mode]") and long form (type/source/target maps).
 			volsNode := getMapValue(svcNode, "volumes")
 			if volsNode != nil {
 				svc.VolumesLine = volsNode.Line
 				for _, v := range volsNode.Content {
-					svc.Volumes = append(svc.Volumes, v.Value)
+					if v.Kind == yaml.MappingNode {
+						src := getScalar(v, "source")
+						tgt := getScalar(v, "target")
+						ro := getScalar(v, "read_only")
+						entry := src + ":" + tgt
+						if ro == "true" {
+							entry += ":ro"
+						}
+						svc.Volumes = append(svc.Volumes, entry)
+					} else {
+						svc.Volumes = append(svc.Volumes, v.Value)
+					}
 				}
 			}
 			// environment: for CORS checks + secret key names (values not retained long-term)
@@ -149,6 +191,14 @@ func Parse(path string) (*File, error) {
 	return f, nil
 }
 
+// getScalar returns the string value of a scalar child under key, or "".
+func getScalar(node *yaml.Node, key string) string {
+	if v := getMapValue(node, key); v != nil {
+		return v.Value
+	}
+	return ""
+}
+
 func getMapValue(node *yaml.Node, key string) *yaml.Node {
 	if node == nil || node.Kind != yaml.MappingNode {
 		return nil
@@ -178,6 +228,7 @@ func parsePort(node *yaml.Node) *PortMapping {
 	if node.Kind == yaml.MappingNode {
 		pubNode := getMapValue(node, "published")
 		tgtNode := getMapValue(node, "target")
+		hostIP := getScalar(node, "host_ip")
 		var raw string
 		var hp, tp int
 		if pubNode != nil {
@@ -201,7 +252,7 @@ func parsePort(node *yaml.Node) *PortMapping {
 				tp = n
 			}
 		}
-		return &PortMapping{Raw: raw, Line: line, HostPort: hp, TargetPort: tp}
+		return &PortMapping{Raw: raw, Line: line, HostPort: hp, TargetPort: tp, HostIP: clean(hostIP)}
 	}
 
 	// scalar / short form
