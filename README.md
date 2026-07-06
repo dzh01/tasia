@@ -13,7 +13,7 @@ Private AI is not automatically private.
 
 ```bash
 # macOS (Apple Silicon) example — pick the asset matching your OS/arch
-VERSION=v0.1.0
+VERSION=v0.1.1
 curl -sSfL "https://github.com/dzh01/tasia/releases/download/${VERSION}/tasia_${VERSION#v}_darwin_arm64.tar.gz" | tar xz
 sudo mv tasia /usr/local/bin/
 tasia version
@@ -40,10 +40,15 @@ go build -o tasia ./cmd/tasia
 ## Quickstart
 
 ```bash
-# Review a directory
+# Point it at any directory containing compose / .env / Dockerfiles
 tasia review --path .
+```
 
-# Example on a known-messy stack
+To try the bundled example (if you installed the binary or via `go install`,
+clone the repo first so the `examples/` directory is present):
+
+```bash
+git clone https://github.com/dzh01/tasia && cd tasia
 tasia review --path examples/messy-ollama-stack
 ```
 
@@ -129,6 +134,10 @@ Exit codes:
 - `0` = pass
 - `1` = blocked findings
 - `2` = tool/config error
+
+Tasia **fails closed**: a config file it cannot parse yields `Decision: ERROR` and
+exit `2`, never a misleading `PASS`. A gate that can't read your stack won't vouch
+for it.
 
 ## Optional local LLM mode
 

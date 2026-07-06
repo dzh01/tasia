@@ -5,6 +5,10 @@ All rules are deterministic. Every finding carries `id`, `severity`, `title`,
 `why`, and `fix`. Secret **values** are never read, stored, or emitted — only key
 names.
 
+Tasia fails closed. If a config file cannot be parsed, the run reports
+`Decision: ERROR` and exits `2` — it never falls through to `PASS` on input it
+could not read.
+
 ## Detection
 
 Services are classified by image name first, then by published host port so bare

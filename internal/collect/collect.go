@@ -1,7 +1,6 @@
 package collect
 
 import (
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -26,6 +25,15 @@ type Collected struct {
 	PublishedPorts     []int
 	SecretKeyNames     []string
 	HasManifest        bool
+	ParseErrors        []ConfigError
+}
+
+// ConfigError records a config file that was found but could not be parsed.
+// The gate must fail closed when any are present: an unparseable config cannot
+// be vouched for, so reporting PASS on it would defeat the tool's purpose.
+type ConfigError struct {
+	Path string
+	Err  string
 }
 
 // EnvFile tracks .env* without values.
@@ -81,22 +89,24 @@ func WalkAndCollect(root string) (*Collected, error) {
 			lower == "compose.yml" || lower == "compose.yaml":
 			f, perr := compose.Parse(path)
 			if perr != nil {
-				// Unparseable compose: warn and skip. Note: this is fail-open —
-				// see roadmap for surfacing an unparseable_config finding instead.
-				fmt.Fprintf(os.Stderr, "warn: parse %s: %v\n", path, perr)
+				// Fail closed: an unparseable compose file is recorded so the
+				// gate reports ERROR rather than silently vouching for it.
+				c.ParseErrors = append(c.ParseErrors, ConfigError{Path: rel, Err: perr.Error()})
 				return nil
 			}
 			c.ComposeFiles = append(c.ComposeFiles, *f)
 			extractFromCompose(c, f)
 		case strings.HasPrefix(lower, ".env"):
 			ef, perr := parseEnvKeys(path)
-			if perr == nil {
-				if r, err := filepath.Rel(root, path); err == nil {
-					ef.Path = r
-				}
-				c.EnvFiles = append(c.EnvFiles, ef)
-				c.SecretKeyNames = append(c.SecretKeyNames, ef.KeyNames()...)
+			if perr != nil {
+				c.ParseErrors = append(c.ParseErrors, ConfigError{Path: rel, Err: perr.Error()})
+				return nil
 			}
+			if r, err := filepath.Rel(root, path); err == nil {
+				ef.Path = r
+			}
+			c.EnvFiles = append(c.EnvFiles, ef)
+			c.SecretKeyNames = append(c.SecretKeyNames, ef.KeyNames()...)
 		case lower == "dockerfile":
 			content, _ := os.ReadFile(path)
 			c.Dockerfiles = append(c.Dockerfiles, Dockerfile{Path: rel, Content: string(content)})

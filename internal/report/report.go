@@ -77,6 +77,39 @@ func PrintSummary(findings []rules.Finding, decision, risk string) {
 	}
 }
 
+// PrintErrorVerdict renders the fail-closed verdict when a config file could
+// not be parsed. The gate reports ERROR rather than vouching for a stack it
+// could not fully read.
+func PrintErrorVerdict(errs []collect.ConfigError) {
+	fmt.Println("TASIA")
+	fmt.Println("Decision: ERROR")
+	fmt.Println("Risk: UNKNOWN")
+	fmt.Printf("\nCould not parse %d config file(s); refusing to vouch for this stack:\n", len(errs))
+	for _, e := range errs {
+		fmt.Printf("  - %s: %s\n", e.Path, e.Err)
+	}
+	fmt.Println("\nFix the file(s) above and re-run.")
+}
+
+// ErrorJSON is the machine-readable ERROR verdict for --format json.
+func ErrorJSON(errs []collect.ConfigError) string {
+	type parseError struct {
+		Path  string `json:"path"`
+		Error string `json:"error"`
+	}
+	out := struct {
+		Decision    string          `json:"decision"`
+		Risk        string          `json:"risk"`
+		ParseErrors []parseError    `json:"parse_errors"`
+		Findings    []rules.Finding `json:"findings"`
+	}{Decision: "ERROR", Risk: "UNKNOWN", Findings: []rules.Finding{}}
+	for _, e := range errs {
+		out.ParseErrors = append(out.ParseErrors, parseError{Path: e.Path, Error: e.Err})
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return string(b)
+}
+
 // FindingsToJSON for --format json
 func FindingsToJSON(findings []rules.Finding, decision, risk string) (string, error) {
 	type out struct {

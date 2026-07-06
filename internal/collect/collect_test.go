@@ -60,3 +60,24 @@ func TestEnvNoValues(t *testing.T) {
 		}
 	}
 }
+
+func TestMalformedComposeIsRecordedNotSilentlySkipped(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "docker-compose.yml"),
+		[]byte("services:\n  ollama:\n    image: [unclosed\n    ports: {{{\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := WalkAndCollect(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.ParseErrors) != 1 {
+		t.Fatalf("malformed compose must be recorded as a parse error (fail closed), got %d", len(c.ParseErrors))
+	}
+	if len(c.ComposeFiles) != 0 {
+		t.Errorf("malformed compose should not become a parsed compose file")
+	}
+	if c.ParseErrors[0].Path != "docker-compose.yml" {
+		t.Errorf("parse error path = %q, want relative docker-compose.yml", c.ParseErrors[0].Path)
+	}
+}

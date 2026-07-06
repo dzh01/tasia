@@ -143,3 +143,23 @@ func TestWriteArtifactsGolden(t *testing.T) {
 		t.Error("WriteArtifacts should not write LLM_REVIEW.md; it is produced only by `tasia explain`")
 	}
 }
+
+func TestErrorJSONIsValidFailClosed(t *testing.T) {
+	out := ErrorJSON([]collect.ConfigError{{Path: "docker-compose.yml", Err: "yaml: line 2: bad"}})
+	var parsed struct {
+		Decision    string `json:"decision"`
+		ParseErrors []struct {
+			Path  string `json:"path"`
+			Error string `json:"error"`
+		} `json:"parse_errors"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("ErrorJSON is not valid JSON: %v", err)
+	}
+	if parsed.Decision != "ERROR" {
+		t.Errorf("decision = %q, want ERROR", parsed.Decision)
+	}
+	if len(parsed.ParseErrors) != 1 || parsed.ParseErrors[0].Path != "docker-compose.yml" {
+		t.Errorf("parse_errors not carried through: %+v", parsed.ParseErrors)
+	}
+}

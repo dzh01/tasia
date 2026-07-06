@@ -102,6 +102,17 @@ func runReview(args []string) error {
 		return err
 	}
 
+	// Fail closed: an unparseable config cannot be vouched for. Report ERROR,
+	// write nothing, and exit 2 rather than a misleading PASS.
+	if len(collected.ParseErrors) > 0 {
+		if *format == "json" {
+			fmt.Println(report.ErrorJSON(collected.ParseErrors))
+		} else {
+			report.PrintErrorVerdict(collected.ParseErrors)
+		}
+		os.Exit(2)
+	}
+
 	// Rules
 	findings := rules.Evaluate(collected)
 
@@ -157,6 +168,14 @@ func runCI(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// Fail closed on unparseable config: a gate must not pass what it can't read.
+	if len(collected.ParseErrors) > 0 {
+		report.PrintErrorVerdict(collected.ParseErrors)
+		fmt.Fprintln(os.Stderr, "CI error: unparseable config; failing closed")
+		os.Exit(2)
+	}
+
 	findings := rules.Evaluate(collected)
 	decision, risk := report.Decide(findings, *failOn, false)
 
@@ -280,6 +299,11 @@ func runExplain(args []string) error {
 	collected, err := collect.WalkAndCollect(absPath)
 	if err != nil {
 		return err
+	}
+	// Fail closed: don't send an incomplete picture to the model.
+	if len(collected.ParseErrors) > 0 {
+		report.PrintErrorVerdict(collected.ParseErrors)
+		os.Exit(2)
 	}
 	findings := rules.Evaluate(collected)
 	decision, risk := report.Decide(findings, "high", false)
