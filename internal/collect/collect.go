@@ -81,7 +81,8 @@ func WalkAndCollect(root string) (*Collected, error) {
 			lower == "compose.yml" || lower == "compose.yaml":
 			f, perr := compose.Parse(path)
 			if perr != nil {
-				// still record file? for now continue, but surface?
+				// Unparseable compose: warn and skip. Note: this is fail-open —
+				// see roadmap for surfacing an unparseable_config finding instead.
 				fmt.Fprintf(os.Stderr, "warn: parse %s: %v\n", path, perr)
 				return nil
 			}
